@@ -1,5 +1,6 @@
 import time
 import pandas as pd
+import sys
 from data_updater.trading_utils import get_clob_client
 from data_updater.google_utils import get_spreadsheet
 from data_updater.find_markets import get_sel_df, get_all_markets, get_all_results, get_markets, add_volatility_to_df
@@ -74,7 +75,7 @@ def sort_df(df):
     
     return sorted_df
 
-def fetch_and_process_data():
+def fetch_and_process_data(ONLY_SELECTED_MARKETS):
     global spreadsheet, client, wk_all, wk_vol, sel_df
     
     spreadsheet = get_spreadsheet()
@@ -88,7 +89,16 @@ def fetch_and_process_data():
 
 
     all_df = get_all_markets(client)
-    all_results = get_all_results(all_df, client)
+    
+    if ONLY_SELECTED_MARKETS and len(sel_df) > 0:
+        # Filter all_df to only include markets that match selected markets
+        selected_questions = sel_df['question'].tolist()
+        filtered_df = all_df[all_df['question'].isin(selected_questions)]
+        print(f'{pd.to_datetime("now")}: Filtered from {len(all_df)} to {len(filtered_df)} markets based on selected markets.')
+        all_results = get_all_results(filtered_df, client)
+    else:
+        # Keep current behavior - process all markets
+        all_results = get_all_results(all_df, client)
     m_data, all_markets = get_markets(all_results, sel_df, maker_reward=0.75)
 
     print(f'{pd.to_datetime("now")}: Fetched all markets data of length {len(all_markets)}.')
@@ -109,11 +119,10 @@ def fetch_and_process_data():
     volatility_df = volatility_df.sort_values('gm_reward_per_100', ascending=False)
    
     new_df = new_df.sort_values('gm_reward_per_100', ascending=False)
-    
 
     print(f'{pd.to_datetime("now")}: Fetched select market of length {len(new_df)}.')
 
-    if len(new_df) > 50:
+    if len(new_df) > 50 or ONLY_SELECTED_MARKETS:
         update_sheet(new_df, wk_all)
         update_sheet(volatility_df, wk_vol)
         update_sheet(m_data, wk_full)
@@ -121,9 +130,14 @@ def fetch_and_process_data():
         print(f'{pd.to_datetime("now")}: Not updating sheet because of length {len(new_df)}.')
 
 if __name__ == "__main__":
+    # Parse command line arguments
+    ONLY_SELECTED_MARKETS = True  # Default value
+    if len(sys.argv) > 1:
+        ONLY_SELECTED_MARKETS = sys.argv[1].lower() in ['true', '1', 'yes', 'on']
+    
     while True:
         try:
-            fetch_and_process_data()
+            fetch_and_process_data(ONLY_SELECTED_MARKETS)
             time.sleep(60 * 5)  # Sleep for 5 minutes (300 seconds)
         except Exception as e:
             traceback.print_exc()
