@@ -17,6 +17,27 @@ from poly_data.data_utils import get_position, get_order, set_position
 if not os.path.exists('positions/'):
     os.makedirs('positions/')
 
+# Create directory for storing trading logs
+if not os.path.exists('log/'):
+    os.makedirs('log/')
+
+def log_message(market, message):
+    """
+    Log a message to both console and market-specific log file.
+    
+    Args:
+        market (str): Market identifier for the log file
+        message (str): Message to log
+    """
+    # Print to console
+    print(message)
+    
+    # Write to log file
+    log_file = f'log/{market}.log'
+    timestamp = pd.Timestamp.utcnow().tz_localize(None)
+    with open(log_file, 'a', encoding='utf-8') as f:
+        f.write(f"{timestamp}: {message}\n")
+
 def send_buy_order(order):
     """
     Create a BUY order for a specific token.
@@ -47,7 +68,7 @@ def send_buy_order(order):
     if trade:
         # Only place orders with prices between 0.1 and 0.9 to avoid extreme positions
         if order['price'] >= 0.1 and order['price'] < 0.9:
-            print(f'Creating new order for {order["size"]} at {order["price"]}')
+            print(f'ORDER:: Creating new order for {order["size"]} at {order["price"]}')
             print(order['token'], 'BUY', order['price'], order['size'])
             client.create_order(
                 order['token'], 
@@ -79,7 +100,7 @@ def send_sell_order(order):
     if order['orders']['buy']['size'] > 0 or order['orders']['sell']['size'] > 0:
         client.cancel_all_asset(order['token'])
 
-    print(f'Creating new order for {order["size"]} at {order["price"]}')
+    print(f'ORDER:: Creating new order for {order["size"]} at {order["price"]}')
     client.create_order(
         order['token'], 
         'SELL', 
@@ -125,7 +146,7 @@ async def perform_trade(market):
                 {'name': 'token1', 'token': row['token1'], 'answer': row['answer1']}, 
                 {'name': 'token2', 'token': row['token2'], 'answer': row['answer2']}
             ]
-            print(f"\n\n{pd.Timestamp.utcnow().tz_localize(None)}: {row['question']}")
+            log_message(market, f"\n\n{pd.Timestamp.utcnow().tz_localize(None)}: {row['question']}")
 
             # Get current positions for both outcomes
             pos_1 = get_position(row['token1'])['size']
@@ -144,7 +165,7 @@ async def perform_trade(market):
                 scaled_amt = amount_to_merge / 10**6
                 
                 if scaled_amt > CONSTANTS.MIN_MERGE_SIZE:
-                    print(f"Position 1 is of size {pos_1} and Position 2 is of size {pos_2}. Merging positions")
+                    log_message(market, f"Position 1 is of size {pos_1} and Position 2 is of size {pos_2}. Merging positions")
                     # Execute the merge operation
                     client.merge_positions(amount_to_merge, market, row['neg_risk'] == 'TRUE')
                     # Update our local position tracking
@@ -213,7 +234,7 @@ async def perform_trade(market):
                 mid_price = (top_bid + top_ask) / 2
                 
                 # Log market conditions for this outcome
-                print(f"\nFor {detail['answer']}. Orders: {orders} Position: {position}, "
+                log_message(market, f"\nFor {detail['answer']}. Orders: {orders} Position: {position}, "
                       f"avgPrice: {avgPrice}, Best Bid: {best_bid}, Best Ask: {best_ask}, "
                       f"Bid Price: {bid_price}, Ask Price: {ask_price}, Mid Price: {mid_price}")
 
@@ -231,7 +252,7 @@ async def perform_trade(market):
                     'row': row
                 }
             
-                print(f"Position: {position}, Trade Size: {row['trade_size']}, "
+                log_message(market, f"Position: {position}, Trade Size: {row['trade_size']}, "
                       f"buy_amount: {buy_amount}, sell_amount: {sell_amount}")
 
                 # File to store risk management information for this market
@@ -241,7 +262,7 @@ async def perform_trade(market):
                 if sell_amount > 0:
                     # Skip if we have no average price (no real position)
                     if avgPrice == 0:
-                        print("Avg Price is 0. Skipping")
+                        log_message(market, "Avg Price is 0. Skipping")
                         continue
 
                     order['size'] = sell_amount
@@ -257,7 +278,7 @@ async def perform_trade(market):
                     # Calculate current profit/loss on position
                     pnl = (mid_price - avgPrice) / avgPrice * 100
 
-                    print(f"Mid Price: {mid_price}, Spread: {spread}, PnL: {pnl}")
+                    log_message(market, f"Mid Price: {mid_price}, Spread: {spread}, PnL: {pnl}")
                     
                     # Prepare risk details for tracking
                     risk_details = {
@@ -279,7 +300,7 @@ async def perform_trade(market):
                     if (pnl < params['stop_loss_threshold'] and spread <= params['spread_threshold']) or row['3_hour'] > params['volatility_threshold']:
                         risk_details['msg'] = (f"Selling {pos_to_sell} because spread is {spread} and pnl is {pnl} "
                                               f"and ratio is {ratio} and 3 hour volatility is {row['3_hour']}")
-                        print("Stop loss Triggered: ", risk_details['msg'])
+                        log_message(market, "Stop loss Triggered: " + risk_details['msg'])
 
                         # Sell at market best bid to ensure execution
                         order['size'] = pos_to_sell
@@ -289,7 +310,7 @@ async def perform_trade(market):
                         risk_details['sleep_till'] = str(pd.Timestamp.utcnow().tz_localize(None) + 
                                                         pd.Timedelta(hours=params['sleep_period']))
 
-                        print("Risking off")
+                        log_message(market, "Risking off")
                         send_sell_order(order)
                         client.cancel_all_market(market)
 
@@ -326,17 +347,17 @@ async def perform_trade(market):
                         start_trading_at = pd.to_datetime(risk_details['sleep_till'])
                         current_time = pd.Timestamp.utcnow().tz_localize(None)
 
-                        print(risk_details, current_time, start_trading_at)
+                        log_message(market, f"Risk details: {risk_details}, current_time: {current_time}, start_trading_at: {start_trading_at}")
                         if current_time < start_trading_at:
                             send_buy = False
-                            print(f"Not sending a buy order because recently risked off. "
+                            log_message(market, f"Not sending a buy order because recently risked off. "
                                  f"Risked off at {risk_details['time']}")
 
                     # Only proceed if we're not in risk-off period
                     if send_buy:
                         # Don't buy if volatility is high or price is far from reference
                         if row['3_hour'] > params['volatility_threshold'] or price_change >= 0.05:
-                            print(f'3 Hour Volatility of {row["3_hour"]} is greater than max volatility of '
+                            log_message(market, f'3 Hour Volatility of {row["3_hour"]} is greater than max volatility of '
                                   f'{params["volatility_threshold"]} or price of {order["price"]} is outside '
                                   f'0.05 of {sheet_value}. Cancelling all orders')
                             client.cancel_all_asset(order['token'])
@@ -347,9 +368,9 @@ async def perform_trade(market):
 
                             # If we have significant opposing position, don't buy more
                             if rev_pos['size'] > row['min_size']:
-                                print("Bypassing creation of new buy order because there is a reverse position")
+                                log_message(market, "Bypassing creation of new buy order because there is a reverse position")
                                 if orders['buy']['size'] > CONSTANTS.MIN_MERGE_SIZE:
-                                    print("Cancelling buy orders because there is a reverse position")
+                                    log_message(market, "Cancelling buy orders because there is a reverse position")
                                     client.cancel_all_asset(order['token'])
                                 
                                 continue
@@ -357,22 +378,22 @@ async def perform_trade(market):
                             # Check market buy/sell volume ratio
                             if overall_ratio < 0:
                                 send_buy = False
-                                print(f"Not sending a buy order because overall ratio is {overall_ratio}")
+                                log_message(market, f"Not sending a buy order because overall ratio is {overall_ratio}")
                                 client.cancel_all_asset(order['token'])
                             else:
                                 # Place new buy order if any of these conditions are met:
                                 # 1. We can get a better price than current order
                                 if best_bid > orders['buy']['price']:
-                                    print(f"Sending Buy Order for {token} because better price. "
+                                    log_message(market, f"Sending Buy Order for {token} because better price. "
                                           f"Orders look like this: {orders['buy']}. Best Bid: {best_bid}")
                                     send_buy_order(order)
                                 # 2. Current position + orders is not enough to reach target
                                 elif position + orders['buy']['size'] < 0.95 * row['trade_size']:
-                                    print(f"Sending Buy Order for {token} because not enough position + size")
+                                    log_message(market, f"Sending Buy Order for {token} because not enough position + size")
                                     send_buy_order(order)
                                 # 3. Our current order is too large and needs to be resized
                                 elif orders['buy']['size'] > order['size'] * 1.01:
-                                    print(f"Resending buy orders because open orders are too large")
+                                    log_message(market, f"Resending buy orders because open orders are too large")
                                     send_buy_order(order)
                                 # Commented out logic for cancelling orders when market conditions change
                                 # elif best_bid_size < orders['buy']['size'] * 0.98 and abs(best_bid - second_best_bid) > 0.03:
@@ -396,12 +417,12 @@ async def perform_trade(market):
                     # Update sell order if:
                     # 1. Current order price is significantly different from target
                     if diff > 2:
-                        print(f"Sending Sell Order for {token} because better current order price of "
+                        log_message(market, f"Sending Sell Order for {token} because better current order price of "
                               f"{order_price} is deviant from the tp_price of {tp_price} and diff is {diff}")
                         send_sell_order(order)
                     # 2. Current order size is too small for our position
                     elif orders['sell']['size'] < position * 0.97:
-                        print(f"Sending Sell Order for {token} because not enough sell size. "
+                        log_message(market, f"Sending Sell Order for {token} because not enough sell size. "
                               f"Position: {position}, Sell Size: {orders['sell']['size']}")
                         send_sell_order(order)
                     
@@ -414,7 +435,7 @@ async def perform_trade(market):
                     #     send_sell_order(order)
 
         except Exception as ex:
-            print(f"Error performing trade for {market}")
+            log_message(market, f"Error performing trade for {market}")
             traceback.print_exc()
 
         # Clean up memory and introduce a small delay
