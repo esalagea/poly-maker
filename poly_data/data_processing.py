@@ -3,6 +3,7 @@ from sortedcontainers import SortedDict
 import poly_data.global_state as global_state
 import poly_data.CONSTANTS as CONSTANTS
 
+from poly_data.log_utils import log_message
 from trading import perform_trade
 import time 
 import asyncio
@@ -52,7 +53,7 @@ def process_data(json_datas, trade=True):
                     asyncio.create_task(perform_trade(asset))
         
 
-        # pretty_print(f'Received book update for {asset}:', global_state.all_data[asset])
+        # pretty_log_message(market,f'Received book update for {asset}:', global_state.all_data[asset])
 
 def add_to_performing(col, id):
     if col not in global_state.performing:
@@ -76,7 +77,7 @@ def process_user_data(rows):
 
     for row in rows:
         market = row['market']
-
+        log_message(market, ["PROCESS USER DATA: "] + [str(element) for element in row])
         side = row['side'].lower()
         token = row['asset_id']
             
@@ -92,7 +93,7 @@ def process_user_data(rows):
                 is_user_maker = False
                 for maker_order in row['maker_orders']:
                     if maker_order['maker_address'].lower() == global_state.client.browser_wallet.lower():
-                        print("User is maker")
+                        log_message(market,"User is maker")
                         size = float(maker_order['matched_amount'])
                         price = float(maker_order['price'])
                         
@@ -107,43 +108,43 @@ def process_user_data(rows):
                 if not is_user_maker:
                     size = float(row['size'])
                     price = float(row['price'])
-                    print("User is taker")
+                    log_message(market,"User is taker")
 
-                print("TRADE EVENT FOR: ", row['market'], "ID: ", row['id'], "STATUS: ", row['status'], " SIDE: ", row['side'], "  MAKER OUTCOME: ", maker_outcome, " TAKER OUTCOME: ", taker_outcome, " PROCESSED SIDE: ", side, " SIZE: ", size) 
+                log_message(market, "TRADE EVENT FOR: ", row['market'], "ID: ", row['id'], "STATUS: ", row['status'], " SIDE: ", row['side'], "  MAKER OUTCOME: ", maker_outcome, " TAKER OUTCOME: ", taker_outcome, " PROCESSED SIDE: ", side, " SIZE: ", size, "PRICE: ", row["price"])
 
 
                 if row['status'] == 'CONFIRMED' or row['status'] == 'FAILED' :
                     if row['status'] == 'FAILED':
-                        print(f"Trade failed for {token}, decreasing")
+                        log_message(market, f"Trade failed for {token}, decreasing")
                         asyncio.create_task(asyncio.sleep(2))
                         update_positions()
                     else:
                         remove_from_performing(col, row['id'])
-                        print("Confirmed. Performing is ", len(global_state.performing[col]))
-                        print("Last trade update is ", global_state.last_trade_update)
-                        print("Performing is ", global_state.performing)
-                        print("Performing timestamps is ", global_state.performing_timestamps)
+                        log_message(market, "Confirmed. Performing is ", len(global_state.performing[col]))
+                        log_message(market, "Last trade update is ", global_state.last_trade_update)
+                        log_message(market, "Performing is ", global_state.performing)
+                        log_message(market, "Performing timestamps is ", global_state.performing_timestamps)
                         
                         asyncio.create_task(perform_trade(market))
 
                 elif row['status'] == 'MATCHED':
                     add_to_performing(col, row['id'])
 
-                    print("Matched. Performing is ", len(global_state.performing[col]))
+                    log_message(market, "Matched. Performing is ", len(global_state.performing[col]))
                     set_position(token, side, size, price)
-                    print("Position after matching is ", global_state.positions[str(token)])
-                    print("Last trade update is ", global_state.last_trade_update)
-                    print("Performing is ", global_state.performing)
-                    print("Performing timestamps is ", global_state.performing_timestamps)
+                    log_message(market, "Position after matching is ", global_state.positions[str(token)])
+                    log_message(market, "Last trade update is ", global_state.last_trade_update)
+                    log_message(market, "Performing is ", global_state.performing)
+                    log_message(market, "Performing timestamps is ", global_state.performing_timestamps)
                     asyncio.create_task(perform_trade(market))
                 elif row['status'] == 'MINED':
                     remove_from_performing(col, row['id'])
 
             elif row['event_type'] == 'order':
-                print("ORDER EVENT FOR: ", row['market'], " STATUS: ",  row['status'], " TYPE: ", row['type'], " SIDE: ", side, "  ORIGINAL SIZE: ", row['original_size'], " SIZE MATCHED: ", row['size_matched'])
+                log_message(market, "ORDER EVENT FOR: ", row['market'], " STATUS: ",  row['status'], " TYPE: ", row['type'], " SIDE: ", side, "  ORIGINAL SIZE: ", row['original_size'], " SIZE MATCHED: ", row['size_matched'])
                 
                 set_order(token, side, float(row['original_size']) - float(row['size_matched']), row['price'])
                 asyncio.create_task(perform_trade(market))
 
     else:
-        print(f"User date received for {market} but its not in")
+        log_message(market, f"User date received for {market} but its not in")
