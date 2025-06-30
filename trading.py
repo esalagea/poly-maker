@@ -133,53 +133,31 @@ async def perform_trade(market):
             ]
             log_message(market, f"\n\n{pd.Timestamp.utcnow().tz_localize(None)}: {row['question']}")
 
-            # Get current positions for both outcomes
-            pos_1 = get_position(row['token1'])['size']
-            pos_2 = get_position(row['token2'])['size']
+            apply_merge_positions_logic(client, market, row)
 
-            # ------- POSITION MERGING LOGIC -------
-            # Calculate if we have opposing positions that can be merged
-            amount_to_merge = min(pos_1, pos_2)
-            
-            # Only merge if positions are above minimum threshold
-            if float(amount_to_merge) > CONSTANTS.MIN_MERGE_SIZE:
-                # Get exact position sizes from blockchain for merging
-                pos_1 = client.get_position(row['token1'])[0]
-                pos_2 = client.get_position(row['token2'])[0]
-                amount_to_merge = min(pos_1, pos_2)
-                scaled_amt = amount_to_merge / 10**6
-                
-                if scaled_amt > CONSTANTS.MIN_MERGE_SIZE:
-                    log_message(market, f"Position 1 is of size {pos_1} and Position 2 is of size {pos_2}. Merging positions")
-                    # Execute the merge operation
-                    client.merge_positions(amount_to_merge, market, row['neg_risk'] == 'TRUE')
-                    # Update our local position tracking
-                    set_position(row['token1'], 'SELL', scaled_amt, 0, 'merge')
-                    set_position(row['token2'], 'SELL', scaled_amt, 0, 'merge')
-                    
             # ------- TRADING LOGIC FOR EACH OUTCOME -------
             # Loop through both outcomes in the market (YES and NO)
             for detail in deets:
                 token = int(detail['token'])
-                
+
                 # Get current orders for this token
                 orders = get_order(token)
 
                 # Get market depth and price information
                 deets = get_best_bid_ask_deets(market, detail['name'], 100, 0.1)
-                
+
                 # Extract all order book details
                 best_bid = deets['best_bid']
                 best_bid_size = deets['best_bid_size']
                 second_best_bid = deets['second_best_bid']
-                second_best_bid_size = deets['second_best_bid_size'] 
+                second_best_bid_size = deets['second_best_bid_size']
                 top_bid = deets['top_bid']
                 best_ask = deets['best_ask']
                 best_ask_size = deets['best_ask_size']
                 second_best_ask = deets['second_best_ask']
                 second_best_ask_size = deets['second_best_ask_size']
                 top_ask = deets['top_ask']
-                
+
                 # Round prices to appropriate precision
                 best_bid = round(best_bid, round_length)
                 best_ask = round(best_ask, round_length)
@@ -195,7 +173,7 @@ async def perform_trade(market):
                     second_best_ask = round(second_best_ask, round_length)
                 except:
                     pass
-                
+
                 top_bid = round(top_bid, round_length)
                 top_ask = round(top_ask, round_length)
 
@@ -203,7 +181,7 @@ async def perform_trade(market):
                 pos = get_position(token)
                 position = pos['size']
                 avgPrice = pos['avgPrice']
-                
+
                 position = round_down(position, 2)
                
                 # Calculate optimal bid and ask prices based on market conditions
@@ -420,9 +398,34 @@ async def perform_trade(market):
                     #     send_sell_order(order)
 
         except Exception as ex:
-            log_message(market, f"Error performing trade for {market}")
+            log_message(market, f"Error performing trade for {market}: {str(ex)}\n{traceback.format_exc()}")
             traceback.print_exc()
 
         # Clean up memory and introduce a small delay
         gc.collect()
         await asyncio.sleep(2)
+
+
+async def apply_merge_positions_logic(client, market, row):
+    # ------- POSITION MERGING LOGIC -------
+    # Get current positions for both outcomes
+    pos_1 = get_position(row['token1'])['size']
+    pos_2 = get_position(row['token2'])['size']
+
+    # Calculate if we have opposing positions that can be merged
+    amount_to_merge = min(pos_1, pos_2)
+    # Only merge if positions are above minimum threshold
+    if float(amount_to_merge) > CONSTANTS.MIN_MERGE_SIZE:
+        # Get exact position sizes from blockchain for merging
+        pos_1 = client.get_position(row['token1'])[0]
+        pos_2 = client.get_position(row['token2'])[0]
+        amount_to_merge = min(pos_1, pos_2)
+        scaled_amt = amount_to_merge / 10 ** 6
+
+        if scaled_amt > CONSTANTS.MIN_MERGE_SIZE:
+            log_message(market, f"Position 1 is of size {pos_1} and Position 2 is of size {pos_2}. Merging positions")
+            # Execute the merge operation
+            client.merge_positions(amount_to_merge, market, row['neg_risk'] == 'TRUE')
+            # Update our local position tracking
+            set_position(row['token1'], 'SELL', scaled_amt, 0, 'merge')
+            set_position(row['token2'], 'SELL', scaled_amt, 0, 'merge')
