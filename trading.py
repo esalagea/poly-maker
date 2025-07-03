@@ -5,7 +5,6 @@ import asyncio                  # Asynchronous I/O
 import traceback                # Exception handling
 import pandas as pd             # Data analysis library
 import math                     # Mathematical functions
-
 import poly_data.global_state as global_state
 import poly_data.CONSTANTS as CONSTANTS
 
@@ -53,8 +52,8 @@ def send_buy_order(order):
     if trade:
         # Only place orders with prices between 0.1 and 0.9 to avoid extreme positions
         if order['price'] >= 0.1 and order['price'] < 0.9:
-            print(f'ORDER:: Creating new order for {order["size"]} at {order["price"]}')
-            print(order['token'], 'BUY', order['price'], order['size'])
+            log_message(order['market'], f'BUY ORDER:: Creating new order for {order["size"]} at {order["price"]}')
+            log_message(order['market'], json.dumps(order))
             client.create_order(
                 order['token'], 
                 'BUY', 
@@ -63,9 +62,9 @@ def send_buy_order(order):
                 True if order['neg_risk'] == 'TRUE' else False
             )
         else:
-            print("Not creating buy order because its outside acceptable price range (0.1-0.9)")
+            log_message(order['market'], "Not creating buy order because its outside acceptable price range (0.1-0.9)")
     else:
-        print(f'Not creating new order because order price of {order["price"]} is less than incentive start price of {incentive_start}. Mid price is {order["mid_price"]}')
+        log_message(order['market'], f'Not creating new order because order price of {order["price"]} is less than incentive start price of {incentive_start}. Mid price is {order["mid_price"]}')
 
 
 def send_sell_order(order):
@@ -85,7 +84,9 @@ def send_sell_order(order):
     if order['orders']['buy']['size'] > 0 or order['orders']['sell']['size'] > 0:
         client.cancel_all_asset(order['token'])
 
-    print(f'SELL ORDER:: Creating new order for {order["size"]} at {order["price"]}')
+    log_message(order['market'], f'SELL ORDER:: Creating new order for {order["size"]} at {order["price"]}')
+    log_message(order['market'], json.dumps(order))
+    
     client.create_order(
         order['token'], 
         'SELL', 
@@ -114,14 +115,22 @@ async def perform_trade(market):
     if market not in market_locks:
         market_locks[market] = asyncio.Lock()
 
+    row = global_state.df[global_state.df['condition_id'] == market].iloc[0]
+    market_making = row['market_making']
+
+    if market_making == "STOP":
+        log_message(market, "Market Making option is set to STOP. No trading.")
+        return
+
     # Use lock to prevent concurrent trading on the same market
     async with market_locks[market]:
         try:
             client = global_state.client
             # Get market details from the configuration
-            row = global_state.df[global_state.df['condition_id'] == market].iloc[0]      
+
             # Determine decimal precision from tick size
             round_length = len(str(row['tick_size']).split(".")[1])
+
 
             # Get trading parameters for this market type
             params = global_state.params[row['param_type']]
@@ -143,35 +152,26 @@ async def perform_trade(market):
                 # Get current orders for this token
                 orders = get_order(token)
 
-                # Get market depth and price information
-                processed_market_data = get_best_bid_ask_deets(market, yes_no_outcome['name'], 100, 0.1)
-
-                # Extract all order book details
-                best_bid = processed_market_data['best_bid']
-                best_bid_size = processed_market_data['best_bid_size']
-
-                top_bid = processed_market_data['top_bid']
-                best_ask = processed_market_data['best_ask']
-                best_ask_size = processed_market_data['best_ask_size']
-
-                top_ask = processed_market_data['top_ask']
-
-                # Round prices to appropriate precision
-                best_bid = round(best_bid, round_length)
-                best_ask = round(best_ask, round_length)
-
-
-
-                top_bid = round(top_bid, round_length)
-                top_ask = round(top_ask, round_length)
-
                 # Get our current position and average price
                 pos = get_position(token)
-                position = pos['size']
+                position = round_down(pos['size'], 2)
                 avgPrice = pos['avgPrice']
 
-                position = round_down(position, 2)
-               
+
+                # TODO: target_size was 100 in the initial code. We updated it to the exact needed target. We risk to be taker here
+                target_size = row['trade_size'] - position
+                # Get market depth and price information
+                processed_market_data = get_best_bid_ask_deets(market, yes_no_outcome['name'], target_size, 0.1)
+
+                # Extract all order book details
+                best_bid = round(processed_market_data['best_bid'], round_length)
+                best_bid_size = processed_market_data['best_bid_size']
+                top_bid = round(processed_market_data['top_bid'], round_length)
+
+                best_ask = round(processed_market_data['best_ask'], round_length)
+                best_ask_size = processed_market_data['best_ask_size']
+                top_ask = round (processed_market_data['top_ask'], round_length)
+
                 # Calculate optimal bid and ask prices based on market conditions
                 bid_price, ask_price = get_order_prices(
                     best_bid, best_bid_size, top_bid, best_ask, 
@@ -200,11 +200,12 @@ async def perform_trade(market):
                     "max_spread": row['max_spread'],
                     'orders': orders,
                     'token_name': yes_no_outcome['name'],
-                    'row': row
+                    'row': row,
+                    'market': market
                 }
             
                 log_message(market, f"Position: {position}, Trade Size (constant): {row['trade_size']}, "
-                      f"Order Prepared: buy_amount: {buy_amount}, sell_amount: {sell_amount}")
+                      f"Order Prepared: buy_amount: {buy_amount} for {bid_price}, sell_amount: {sell_amount} for {ask_price}")
 
                 # ------- SELL ORDER LOGIC -------
                 if sell_amount > 0:
@@ -310,7 +311,8 @@ async def perform_trade(market):
         gc.collect()
         await asyncio.sleep(2)
 
-async def apply_merge_positions_logic(client, market, row):
+
+def apply_merge_positions_logic(client, market, row):
     # ------- POSITION MERGING LOGIC -------
     # Get current positions for both outcomes
     pos_1 = get_position(row['token1'])['size']
@@ -373,7 +375,6 @@ def base_buy_conditions_met(market, position, buy_amount, row):
 
     return True
 
-
 def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length):
     risk_file_name = risk_management_filename(market)
     client = global_state.client
@@ -388,10 +389,9 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
     except:
         overall_ratio = 0
 
-    position = get_position(token)['size']
-    position = round_down(position, 2)
+    position = round_down(get_position(token)['size'], 2)
 
-    if not base_buy_conditions_met(position, buy_amount, row):
+    if not base_buy_conditions_met(market, position, buy_amount, row):
         return False
 
     # Get reference price from market data
