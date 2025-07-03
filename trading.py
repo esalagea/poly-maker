@@ -25,6 +25,52 @@ if not os.path.exists('positions/'):
 if not os.path.exists('log/'):
     os.makedirs('log/')
 
+def cancel_orders_with_logging(token, market=None):
+    """
+    Cancel all orders for a given token with proper logging.
+    
+    Args:
+        token: The token/asset_id to cancel orders for
+        market: Market identifier for API call and logging context
+    """
+    client = global_state.client
+    
+    # Get existing orders before canceling
+    try:
+        if market:
+            # Get all orders for the market, then filter by token
+            all_market_orders = client.get_market_orders(market)
+            existing_orders = all_market_orders[all_market_orders['asset_id'] == str(token)]
+        else:
+            # Fallback: get all orders and filter by token
+            all_orders = client.get_all_orders()
+            existing_orders = all_orders[all_orders['asset_id'] == str(token)]
+        
+        if len(existing_orders) > 0:
+            # Log details about orders being canceled
+            orders_info = []
+            for idx, order in existing_orders.iterrows():
+                orders_info.append(f"{order['side']} {order['original_size']} @ {order['price']}")
+            
+            orders_str = ", ".join(orders_info)
+            
+            if market:
+                log_message(market, f"Canceling {len(existing_orders)} existing orders for token {token}: {orders_str}")
+            else:
+                log_message("TRADING", f"Canceling {len(existing_orders)} existing orders for token {token}: {orders_str}")
+        
+        # Cancel the orders
+        client.cancel_all_asset(token)
+        
+    except Exception as e:
+        if market:
+            log_message(market, f"Error checking orders before cancel for token {token}: {str(e)}")
+        else:
+            log_message("TRADING", f"Error checking orders before cancel for token {token}: {str(e)}")
+        
+        # Still attempt to cancel even if we couldn't get order details
+        client.cancel_all_asset(token)
+
 
 
 
@@ -44,7 +90,7 @@ def send_buy_order(order):
 
     # Cancel existing orders for this token to avoid conflicts
     if order['orders']['buy']['size'] > 0 or order['orders']['sell']['size'] > 0:
-        client.cancel_all_asset(order['token'])
+        cancel_orders_with_logging(order['token'], order['market'])
 
     # Calculate minimum acceptable price based on market spread
     incentive_start = order['mid_price'] - order['max_spread']/100
@@ -73,22 +119,43 @@ def send_buy_order(order):
         log_message(order['market'], f'Not creating new order because order price of {order["price"]} is less than incentive start price of {incentive_start}. Mid price is {order["mid_price"]}')
 
 
-def send_sell_order(order):
+def send_sell_order(order, existing_orders=None):
     """
     Create a SELL order for a specific token.
     
     This function:
-    1. Cancels any existing orders for the token
-    2. Creates a new sell order with the specified parameters
+    1. Checks if the new order is different from existing sell order
+    2. Only cancels and creates new order if there are differences
+    3. Creates a new sell order with the specified parameters
     
     Args:
         order (dict): Order details including token, price, size, and market parameters
+        existing_orders (dict, optional): Current orders for comparison. If None, uses order['orders']
     """
     client = global_state.client
-
+    
+    # Use provided existing_orders or fall back to order['orders']
+    current_orders = existing_orders if existing_orders is not None else order['orders']
+    
+    # Check if new sell order is identical to existing sell order
+    existing_sell = current_orders.get('sell', {})
+    existing_sell_price = existing_sell.get('price', 0)
+    existing_sell_size = existing_sell.get('size', 0)
+    
+    new_price = float(order['price'])
+    new_size = float(order['size'])
+    
+    # Compare with small tolerance for floating point precision
+    price_same = abs(existing_sell_price - new_price) < 0.001
+    size_same = abs(existing_sell_size - new_size) < 0.001
+    
+    if price_same and size_same and existing_sell_size > 0:
+        log_message(order['market'], f'SELL ORDER:: Skipping order creation - identical to existing: {new_size} at {new_price}')
+        return
+    
     # Cancel existing orders for this token to avoid conflicts
-    if order['orders']['buy']['size'] > 0 or order['orders']['sell']['size'] > 0:
-        client.cancel_all_asset(order['token'])
+    if current_orders.get('buy', {}).get('size', 0) > 0 or current_orders.get('sell', {}).get('size', 0) > 0:
+        cancel_orders_with_logging(order['token'], order['market'])
 
     log_message(order['market'], f'SELL ORDER:: Creating new order for {order["size"]} at {order["price"]}')
     # TODO: FIXME - the order contains a Pandas series - log_message(order['market'], json.dumps(order))
@@ -134,7 +201,7 @@ async def perform_trade(market):
             params = global_state.params[row['param_type']]
 
             market_quality_df = analyze_market_quality(market, row, params)
-            #save_market_quality_data(market_quality_df)
+            save_market_quality_data(market_quality_df)
 
             if market_making == "STOP" or market_making == "":
                 #log_message(market, "Market Making option is set to STOP. No trading.")
@@ -302,12 +369,12 @@ async def perform_trade(market):
                     if diff > 2:
                         log_message(market, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because better current order price of "
                               f"{order_price} is deviant from the tp_price of {tp_price} and diff is {diff}%")
-                        send_sell_order(order)
+                        send_sell_order(order, orders)
                     # 2. Current order size is too small for our position
                     elif orders['sell']['size'] < position * 0.97:
                         log_message(market, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because not enough sell size on current order. "
                               f"Position: {position}, Sell Size: {orders['sell']['size']}")
-                        send_sell_order(order)
+                        send_sell_order(order, orders)
                     
                     # Commented out additional conditions for updating sell orders
                     # elif orders['sell']['price'] < ask_price:
@@ -442,7 +509,7 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
         log_message(market, f'3 Hour Volatility of {row["3_hour"]} is greater than max volatility of '
                             f'{params["volatility_threshold"]} or price of {order["price"]} is outside '
                             f'0.05 of {sheet_value}. Cancelling all orders')
-        client.cancel_all_asset(order['token'])
+        cancel_orders_with_logging(order['token'], market)
         return False
 
     # Check for reverse position (holding opposite outcome)
@@ -454,28 +521,27 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
         log_message(market, f'Bypassing creation of new buy order because there is a reverse position of size {rev_pos["size"]}')
         if orders['buy']['size'] > CONSTANTS.MIN_MERGE_SIZE:
             log_message(market, "Cancelling buy orders because there is a reverse position")
-            client.cancel_all_asset(order['token'])
+            cancel_orders_with_logging(order['token'], market)
         return False
 
     # Check market buy/sell volume ratio
     if overall_ratio < 0:
-        return False
         log_message(market, f"Not sending a buy order because overall ratio is {overall_ratio}")
-        client.cancel_all_asset(order['token'])
+        cancel_orders_with_logging(order['token'], market)
+        return False
 
     # Place new buy order if any of these conditions are met:
     # 1. We can get a better price than current order
     if best_bid > orders['buy']['price']:
-        log_message(market, f"Sending Buy Order for {yes_no_outcome['answer']} {token} [] because we can send at {best_bid}  which is better that the current order at {orders['buy']['price']}. "
-                            f"Orders look like this: {orders['buy']}. Best Bid: {best_bid}")
+        log_message(market, f"Sending Buy Order for {yes_no_outcome['answer']} [{token}] - NEW: BUY {order['size']} @ {best_bid}, OLD: BUY {orders['buy']['size']} @ {orders['buy']['price']}")
         send_buy_order(order)
     # 2. Current position + orders is not enough to reach target
     elif position + orders['buy']['size'] < 0.95 * row['trade_size']:
-        log_message(market, f"Sending Buy Order for {yes_no_outcome['answer']} [{token}] because not enough position + size")
+        log_message(market, f"Sending Buy Order for {yes_no_outcome['answer']} [{token}] because not enough position + size - NEW: BUY {order['size']} @ {bid_price}, OLD: BUY {orders['buy']['size']} @ {orders['buy']['price']}")
         send_buy_order(order)
     # 3. Our current order is too large and needs to be resized
     elif orders['buy']['size'] > order['size'] * 1.01:
-        log_message(market, f"Resending buy orders because open orders are too large")
+        log_message(market, f"Resending buy orders for {yes_no_outcome['answer']} [{token}] because open orders are too large - NEW: BUY {order['size']} @ {bid_price}, OLD: BUY {orders['buy']['size']} @ {orders['buy']['price']}")
         send_buy_order(order)
 
     return True
