@@ -94,7 +94,7 @@ def save_market_quality_data(market_quality_df):
         if last_spreadsheet_update is not None:
             time_since_last_global_update = current_time - last_spreadsheet_update
             if time_since_last_global_update.total_seconds() < 60:  # 60 seconds = 1 minute
-                print(f"Skipping market quality update - only {time_since_last_global_update.total_seconds():.0f} seconds since last spreadsheet update")
+                # print(f"Skipping market quality update - only {time_since_last_global_update.total_seconds():.0f} seconds since last spreadsheet update")
                 return
         
         # Get the spreadsheet instance

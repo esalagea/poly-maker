@@ -104,7 +104,7 @@ def send_buy_order(order):
     if trade:
         # Only place orders with prices between 0.1 and 0.9 to avoid extreme positions
         if order['price'] >= 0.1 and order['price'] < 0.9:
-            log_message(order['market'], f'BUY ORDER:: Creating new order for {order["size"]} at {order["price"]}')
+            log_message(order['market'], f'BUY ORDER:: Creating new order - BUY {order["size"]} @ {order["price"]}')
             # TODO: FIXME - the order contains a Pandas series - log_message(order['market'], json.dumps(order))
             client.create_order(
                 order['token'], 
@@ -114,9 +114,9 @@ def send_buy_order(order):
                 True if order['neg_risk'] == 'TRUE' else False
             )
         else:
-            log_message(order['market'], "Not creating buy order because its outside acceptable price range (0.1-0.9)")
+            log_message(order['market'], f"Not creating buy order because its outside acceptable price range (0.1-0.9) - BUY {order['size']} @ {order['price']}")
     else:
-        log_message(order['market'], f'Not creating new order because order price of {order["price"]} is less than incentive start price of {incentive_start}. Mid price is {order["mid_price"]}')
+        log_message(order['market'], f'Not creating new order because order price is less than incentive start price - BUY {order["size"]} @ {order["price"]} < {incentive_start}. Mid price: {order["mid_price"]}')
 
 
 def send_sell_order(order, existing_orders=None):
@@ -150,14 +150,14 @@ def send_sell_order(order, existing_orders=None):
     size_same = abs(existing_sell_size - new_size) < 0.001
     
     if price_same and size_same and existing_sell_size > 0:
-        log_message(order['market'], f'SELL ORDER:: Skipping order creation - identical to existing: {new_size} at {new_price}')
+        log_message(order['market'], f'SELL ORDER:: Skipping order creation - identical to existing: SELL {new_size} @ {new_price}')
         return
     
     # Cancel existing orders for this token to avoid conflicts
     if current_orders.get('buy', {}).get('size', 0) > 0 or current_orders.get('sell', {}).get('size', 0) > 0:
         cancel_orders_with_logging(order['token'], order['market'])
 
-    log_message(order['market'], f'SELL ORDER:: Creating new order for {order["size"]} at {order["price"]}')
+    log_message(order['market'], f'SELL ORDER:: Creating new order - SELL {order["size"]} @ {order["price"]}')
     # TODO: FIXME - the order contains a Pandas series - log_message(order['market'], json.dumps(order))
     
     client.create_order(
@@ -348,7 +348,7 @@ async def perform_trade(market):
                         open(risk_management_filename(market), 'w').write(json.dumps(risk_details))
                         continue
 
-                send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length)
+                send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length, market_quality_df)
                         
                 # ------- TAKE PROFIT / SELL ORDER MANAGEMENT -------            
                 if sell_amount > 0:
@@ -367,13 +367,11 @@ async def perform_trade(market):
                     # Update sell order if:
                     # 1. Current order price is significantly different from target
                     if diff > 2:
-                        log_message(market, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because better current order price of "
-                              f"{order_price} is deviant from the tp_price of {tp_price} and diff is {diff}%")
+                        log_message(market, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because price deviant - NEW: SELL {order['size']} @ {order['price']}, OLD: SELL {orders['sell']['size']} @ {order_price} (diff: {diff}%)")
                         send_sell_order(order, orders)
                     # 2. Current order size is too small for our position
                     elif orders['sell']['size'] < position * 0.97:
-                        log_message(market, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because not enough sell size on current order. "
-                              f"Position: {position}, Sell Size: {orders['sell']['size']}")
+                        log_message(market, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because not enough sell size - NEW: SELL {order['size']} @ {order['price']}, OLD: SELL {orders['sell']['size']} @ {orders['sell']['price']} (Position: {position})")
                         send_sell_order(order, orders)
                     
                     # Commented out additional conditions for updating sell orders
@@ -418,12 +416,22 @@ def apply_merge_positions_logic(client, market, row):
             set_position(row['token2'], 'SELL', scaled_amt, 0, 'merge')
 
 
-def base_buy_conditions_met(market, position, buy_amount, row):
+def base_buy_conditions_met(market, position, buy_amount, row, market_quality_score=None):
     # ------- BUY ORDER LOGIC -------
     # Only buy if:
-    # 1. Position is less than 90% of target size
-    # 2. Position is less than absolute cap (250)
-    # 3. Buy amount is above minimum size
+    # 1. Market quality score is above 50
+    # 2. Position is less than 90% of target size
+    # 3. Position is less than absolute cap (250)
+    # 4. Buy amount is above minimum size
+    
+    # Check market quality score first
+    if market_quality_score is None or market_quality_score <= 50:
+        log_message(market,
+                    "Buy check failed: market quality score too low",
+                    f"score={market_quality_score}"
+                    )
+        return False
+    
     if position >= 0.9 * row['trade_size']:
         log_message(market,
                     "Buy check failed: position exceeds 90% of trade size",
@@ -456,7 +464,7 @@ def base_buy_conditions_met(market, position, buy_amount, row):
 
     return True
 
-def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length):
+def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length, market_quality_df):
     risk_file_name = risk_management_filename(market)
     client = global_state.client
     params = global_state.params[row['param_type']]
@@ -472,7 +480,10 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
 
     position = round_down(get_position(token)['size'], 2)
 
-    if not base_buy_conditions_met(market, position, buy_amount, row):
+    # Extract market quality score from DataFrame
+    market_quality_score = market_quality_df['score'].iloc[0] if 'score' in market_quality_df.columns else None
+
+    if not base_buy_conditions_met(market, position, buy_amount, row, market_quality_score):
         return False
 
     # Get reference price from market data
@@ -499,13 +510,12 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
 
         log_message(market, f"Risk details: {risk_details}, current_time: {current_time}, start_trading_at: {start_trading_at}")
         if current_time < start_trading_at:
-            log_message(market, f"Not sending a buy order because recently risked off. "
-                                f"Risked off at {risk_details['time']}")
+            log_message(market, f"Not sending a buy order because recently risked off at {risk_details['time']} - Would be: BUY {order['size']} @ {order['price']}")
             return False
 
 
     # Don't buy if volatility is high or price is far from reference
-    if row['3_hour'] > params['volatility_threshold'] or price_change >= 0.05:
+    if row['3_hour'] > params['volatility_threshold'] :  # or price_change >= 0.05:
         log_message(market, f'3 Hour Volatility of {row["3_hour"]} is greater than max volatility of '
                             f'{params["volatility_threshold"]} or price of {order["price"]} is outside '
                             f'0.05 of {sheet_value}. Cancelling all orders')
@@ -518,15 +528,15 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
 
     # If we have significant opposing position, don't buy more
     if rev_pos['size'] > row['min_size']:
-        log_message(market, f'Bypassing creation of new buy order because there is a reverse position of size {rev_pos["size"]}')
+        log_message(market, f'Bypassing creation of new buy order because there is a reverse position of size {rev_pos["size"]} - Would be: BUY {order["size"]} @ {order["price"]}')
         if orders['buy']['size'] > CONSTANTS.MIN_MERGE_SIZE:
-            log_message(market, "Cancelling buy orders because there is a reverse position")
+            log_message(market, f"Cancelling buy orders because there is a reverse position - Cancelling: BUY {orders['buy']['size']} @ {orders['buy']['price']}")
             cancel_orders_with_logging(order['token'], market)
         return False
 
     # Check market buy/sell volume ratio
     if overall_ratio < 0:
-        log_message(market, f"Not sending a buy order because overall ratio is {overall_ratio}")
+        log_message(market, f"Not sending a buy order because overall ratio is {overall_ratio} - Would be: BUY {order['size']} @ {order['price']}")
         cancel_orders_with_logging(order['token'], market)
         return False
 
