@@ -1,7 +1,35 @@
 import poly_data.global_state as global_state
 from poly_data.utils import get_sheet_df
+from poly_data.log_utils import log_message
 import time
 import poly_data.global_state as global_state
+
+def get_market_from_token(token):
+    """
+    Get the market/condition_id from a token/asset_id.
+    
+    Args:
+        token: The token/asset_id to look up
+        
+    Returns:
+        str: The condition_id (market) for the token, or None if not found
+    """
+    token = str(token)
+    
+    # Check if we have market data loaded
+    if global_state.df is None or global_state.df.empty:
+        return None
+    
+    # Look for the token in either token1 or token2 columns
+    matching_row = global_state.df[
+        (global_state.df['token1'] == token) | 
+        (global_state.df['token2'] == token)
+    ]
+    
+    if not matching_row.empty:
+        return matching_row.iloc[0]['condition_id']
+    
+    return None
 
 #sth here seems to be removing the position
 def _update_position_size_conditionally(asset, position, api_size):
@@ -16,15 +44,27 @@ def _update_position_size_conditionally(asset, position, api_size):
 
             if asset in  global_state.last_trade_update:
                 if time.time() - global_state.last_trade_update[asset] < 5:
-                    print(f"Skipping update for {asset} because last trade update was less than 5 seconds ago")
+                    market = get_market_from_token(asset)
+                    if market:
+                        log_message(market, f"Skipping update for {asset} because last trade update was less than 5 seconds ago")
+                    else:
+                        log_message("UNKNOWN_MARKET", f"Skipping update for {asset} because last trade update was less than 5 seconds ago")
                     continue
 
             if old_size != api_size:
-                print(f"No trades are pending. Updating position from {old_size} to {api_size} and avgPrice to {position['avgPrice']} using API")
+                market = get_market_from_token(asset)
+                if market:
+                    log_message(market, f"No trades are pending. Updating position from {old_size} to {api_size} and avgPrice to {position['avgPrice']} using API")
+                else:
+                    log_message("UNKNOWN_MARKET", f"No trades are pending. Updating position from {old_size} to {api_size} and avgPrice to {position['avgPrice']} using API")
 
             position['size'] = api_size
         else:
-            print(f"ALERT: Skipping update for {asset} because there are trades pending for {col} looking like {global_state.performing[col]}")
+            market = get_market_from_token(asset)
+            if market:
+                log_message(market, f"ALERT: Skipping update for {asset} because there are trades pending for {col} looking like {global_state.performing[col]}")
+            else:
+                log_message("UNKNOWN_MARKET", f"ALERT: Skipping update for {asset} because there are trades pending for {col} looking like {global_state.performing[col]}")
 
 def update_positions(avgOnly=False):
     pos_df = global_state.client.get_all_positions()
@@ -94,7 +134,11 @@ def set_position(token, side, size, price, source='websocket'):
     else:
         global_state.positions[token] = {'size': size, 'avgPrice': price}
 
-    print(f"Updated position from {source}, set to ", global_state.positions[token])
+    market = get_market_from_token(token)
+    if market:
+        log_message(market, f"Updated position from {source}, set to {global_state.positions[token]}")
+    else:
+        log_message("UNKNOWN_MARKET", f"Updated position from {source}, set to {global_state.positions[token]}")
 
 def update_orders():
     all_orders = global_state.client.get_all_orders()
@@ -118,7 +162,11 @@ def update_orders():
                         curr = sel_orders[type]
 
                         if len(curr) > 1:
-                            print("Multiple orders found, cancelling")
+                            market = get_market_from_token(token)
+                            if market:
+                                log_message(market, f"Multiple orders found for token {token}, cancelling")
+                            else:
+                                log_message("UNKNOWN_MARKET", f"Multiple orders found for token {token}, cancelling")
                             global_state.client.cancel_all_asset(token)
                             orders[str(token)] = {'buy': {'price': 0, 'size': 0}, 'sell': {'price': 0, 'size': 0}}
                         elif len(curr) == 1:
@@ -149,7 +197,11 @@ def set_order(token, side, size, price):
     curr[side]['price'] = float(price)
 
     global_state.orders[str(token)] = curr
-    print("Updated order, set to ", curr)
+    market = get_market_from_token(token)
+    if market:
+        log_message(market, f"Updated order, set to {curr}")
+    else:
+        log_message("UNKNOWN_MARKET", f"Updated order, set to {curr}")
 
     
 
