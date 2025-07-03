@@ -119,7 +119,7 @@ def send_buy_order(order):
         log_message(order['market'], f'Not creating new order because order price is less than incentive start price - BUY {order["size"]} @ {order["price"]} < {incentive_start}. Mid price: {order["mid_price"]}')
 
 
-def send_sell_order(order, existing_orders=None):
+def send_sell_order(order, existing_orders=None, log_message_text=None):
     """
     Create a SELL order for a specific token.
     
@@ -127,12 +127,18 @@ def send_sell_order(order, existing_orders=None):
     1. Checks if the new order is different from existing sell order
     2. Only cancels and creates new order if there are differences
     3. Creates a new sell order with the specified parameters
+    4. Logs provided message only if order is actually created
     
     Args:
         order (dict): Order details including token, price, size, and market parameters
         existing_orders (dict, optional): Current orders for comparison. If None, uses order['orders']
+        log_message_text (str, optional): Custom message to log when order is created
+    
+    Returns:
+        bool: True if order was created, False if skipped
     """
     client = global_state.client
+    market = order['market']
     
     # Use provided existing_orders or fall back to order['orders']
     current_orders = existing_orders if existing_orders is not None else order['orders']
@@ -150,15 +156,17 @@ def send_sell_order(order, existing_orders=None):
     size_same = abs(existing_sell_size - new_size) < 0.001
     
     if price_same and size_same and existing_sell_size > 0:
-        log_message(order['market'], f'SELL ORDER:: Skipping order creation - identical to existing: SELL {new_size} @ {new_price}')
-        return
+        # Skip order creation - do not log anything
+        return False
     
     # Cancel existing orders for this token to avoid conflicts
     if current_orders.get('buy', {}).get('size', 0) > 0 or current_orders.get('sell', {}).get('size', 0) > 0:
-        cancel_orders_with_logging(order['token'], order['market'])
+        cancel_orders_with_logging(order['token'], market)
 
-    log_message(order['market'], f'SELL ORDER:: Creating new order - SELL {order["size"]} @ {order["price"]}')
-    # TODO: FIXME - the order contains a Pandas series - log_message(order['market'], json.dumps(order))
+    # Log the provided message or default message
+    if log_message_text:
+        log_message(market, log_message_text)
+    log_message(market, f'SELL ORDER:: Creating new order - SELL {order["size"]} @ {order["price"]}')
     
     client.create_order(
         order['token'], 
@@ -167,6 +175,8 @@ def send_sell_order(order, existing_orders=None):
         order['size'], 
         True if order['neg_risk'] == 'TRUE' else False
     )
+    
+    return True
 
 # Dictionary to store locks for each market to prevent concurrent trading on the same market
 market_locks = {}
@@ -340,8 +350,7 @@ async def perform_trade(market):
                         risk_details['sleep_till'] = str(pd.Timestamp.utcnow().tz_localize(None) + 
                                                         pd.Timedelta(hours=params['sleep_period']))
 
-                        log_message(market, "Risking off")
-                        send_sell_order(order)
+                        send_sell_order(order, None, f"STOP LOSS ORDER:: Risking off - SELL {order['size']} @ {order['price']}")
                         client.cancel_all_market(market)
 
                         # Save risk details to file
@@ -367,12 +376,10 @@ async def perform_trade(market):
                     # Update sell order if:
                     # 1. Current order price is significantly different from target
                     if diff > 2:
-                        log_message(market, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because price deviant - NEW: SELL {order['size']} @ {order['price']}, OLD: SELL {orders['sell']['size']} @ {order_price} (diff: {diff}%)")
-                        send_sell_order(order, orders)
+                        send_sell_order(order, orders, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because price deviant - NEW: SELL {order['size']} @ {order['price']}, OLD: SELL {orders['sell']['size']} @ {order_price} (diff: {diff}%)")
                     # 2. Current order size is too small for our position
                     elif orders['sell']['size'] < position * 0.97:
-                        log_message(market, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because not enough sell size - NEW: SELL {order['size']} @ {order['price']}, OLD: SELL {orders['sell']['size']} @ {orders['sell']['price']} (Position: {position})")
-                        send_sell_order(order, orders)
+                        send_sell_order(order, orders, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because not enough sell size - NEW: SELL {order['size']} @ {order['price']}, OLD: SELL {orders['sell']['size']} @ {orders['sell']['price']} (Position: {position})")
                     
                     # Commented out additional conditions for updating sell orders
                     # elif orders['sell']['price'] < ask_price:
@@ -416,7 +423,7 @@ def apply_merge_positions_logic(client, market, row):
             set_position(row['token2'], 'SELL', scaled_amt, 0, 'merge')
 
 
-def base_buy_conditions_met(market, position, buy_amount, row, market_quality_score=None):
+def base_buy_conditions_met(market, position, buy_amount, row, market_quality_row=None):
     # ------- BUY ORDER LOGIC -------
     # Only buy if:
     # 1. Market quality score is above 50
@@ -425,10 +432,18 @@ def base_buy_conditions_met(market, position, buy_amount, row, market_quality_sc
     # 4. Buy amount is above minimum size
     
     # Check market quality score first
-    if market_quality_score is None or market_quality_score <= 50:
+    if market_quality_row is not None:
+        market_quality_score = market_quality_row.get('score', None) if isinstance(market_quality_row, dict) else market_quality_row.iloc[0].get('score', None) if hasattr(market_quality_row, 'iloc') else None
+        
+        if market_quality_score is None or market_quality_score <= 50:
+            log_message(market,
+                        "Buy check failed: market quality score too low",
+                        f"score={market_quality_score}"
+                        )
+            return False
+    else:
         log_message(market,
-                    "Buy check failed: market quality score too low",
-                    f"score={market_quality_score}"
+                    "Buy check failed: market quality data not available"
                     )
         return False
     
@@ -464,7 +479,7 @@ def base_buy_conditions_met(market, position, buy_amount, row, market_quality_sc
 
     return True
 
-def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length, market_quality_df):
+def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length, market_quality_row):
     risk_file_name = risk_management_filename(market)
     client = global_state.client
     params = global_state.params[row['param_type']]
@@ -480,10 +495,7 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
 
     position = round_down(get_position(token)['size'], 2)
 
-    # Extract market quality score from DataFrame
-    market_quality_score = market_quality_df['score'].iloc[0] if 'score' in market_quality_df.columns else None
-
-    if not base_buy_conditions_met(market, position, buy_amount, row, market_quality_score):
+    if not base_buy_conditions_met(market, position, buy_amount, row, market_quality_row):
         return False
 
     # Get reference price from market data
