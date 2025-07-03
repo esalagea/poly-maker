@@ -14,7 +14,6 @@ def analyze_market_quality(market, row, params):
     Returns:
         pandas DataFrame with single row containing analysis results
     """
-
     bids = global_state.all_data[market]['bids']
     asks = global_state.all_data[market]['asks']
     min_total_liquidity = params['min_total_liquidity']

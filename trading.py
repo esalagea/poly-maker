@@ -14,6 +14,9 @@ from update_markets import save_market_quality_data
 from poly_data.trading_utils import get_best_bid_ask_deets, get_order_prices, get_buy_sell_amount, round_down, round_up
 from poly_data.data_utils import get_position, get_order, set_position
 
+from poly_data.log_utils import log_message
+from poly_data.log_utils import log_market_conditions_if_changed
+
 # Create directory for storing position risk information
 if not os.path.exists('positions/'):
     os.makedirs('positions/')
@@ -22,7 +25,8 @@ if not os.path.exists('positions/'):
 if not os.path.exists('log/'):
     os.makedirs('log/')
 
-from poly_data.log_utils import log_message
+
+
 
 def send_buy_order(order):
     """
@@ -100,10 +104,6 @@ def send_sell_order(order):
 # Dictionary to store locks for each market to prevent concurrent trading on the same market
 market_locks = {}
 
-
-
-
-
 async def perform_trade(market):
     """
     Main trading function that handles market making for a specific market.
@@ -134,10 +134,10 @@ async def perform_trade(market):
             params = global_state.params[row['param_type']]
 
             market_quality_df = analyze_market_quality(market, row, params)
-            save_market_quality_data(market_quality_df)
+            #save_market_quality_data(market_quality_df)
 
             if market_making == "STOP" or market_making == "":
-                log_message(market, "Market Making option is set to STOP. No trading.")
+                #log_message(market, "Market Making option is set to STOP. No trading.")
                 return
 
 
@@ -155,7 +155,7 @@ async def perform_trade(market):
                 {'name': 'token1', 'token': row['token1'], 'answer': row['answer1']}, 
                 {'name': 'token2', 'token': row['token2'], 'answer': row['answer2']}
             ]
-            log_message(market, f"\n\n{pd.Timestamp.utcnow().tz_localize(None)}: {row['question']}")
+
 
             apply_merge_positions_logic(client, market, row)
 
@@ -198,11 +198,6 @@ async def perform_trade(market):
 
                 # Calculate mid price for reference
                 mid_price = (top_bid + top_ask) / 2
-                
-                # Log market conditions for this outcome
-                log_message(market, f"\nFor {yes_no_outcome['answer']}. Orders: {orders} Position: {position}, "
-                      f"avgPrice: {avgPrice}, Best Bid: {best_bid}, Best Ask: {best_ask}, "
-                      f"Our optimal bid Price: {bid_price}, Our optimal ask Price: {ask_price}, Mid Price: {mid_price}")
 
                 # Calculate how much to buy or sell based on our position
                 buy_amount, sell_amount = get_buy_sell_amount(position, bid_price, row)
@@ -218,9 +213,13 @@ async def perform_trade(market):
                     'row': row,
                     'market': market
                 }
-            
-                log_message(market, f"Position: {position}, Trade Size (constant): {row['trade_size']}, "
-                      f"Order Prepared: buy_amount: {buy_amount} for {bid_price}, sell_amount: {sell_amount} for {ask_price}")
+
+                # Log market conditions for this outcome (only if changed)
+                log_market_conditions_if_changed(
+                    market, row['question'], yes_no_outcome, orders, position, avgPrice,
+                    best_bid, best_ask, bid_price, ask_price, mid_price,
+                    row['trade_size'], buy_amount, sell_amount
+                )
 
                 # ------- SELL ORDER LOGIC -------
                 if sell_amount > 0:
@@ -467,12 +466,12 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
     # Place new buy order if any of these conditions are met:
     # 1. We can get a better price than current order
     if best_bid > orders['buy']['price']:
-        log_message(market, f"Sending Buy Order for {token} because better price. "
+        log_message(market, f"Sending Buy Order for {yes_no_outcome['answer']} {token} [] because we can send at {best_bid}  which is better that the current order at {orders['buy']['price']}. "
                             f"Orders look like this: {orders['buy']}. Best Bid: {best_bid}")
         send_buy_order(order)
     # 2. Current position + orders is not enough to reach target
     elif position + orders['buy']['size'] < 0.95 * row['trade_size']:
-        log_message(market, f"Sending Buy Order for {token} because not enough position + size")
+        log_message(market, f"Sending Buy Order for {yes_no_outcome['answer']} [{token}] because not enough position + size")
         send_buy_order(order)
     # 3. Our current order is too large and needs to be resized
     elif orders['buy']['size'] > order['size'] * 1.01:

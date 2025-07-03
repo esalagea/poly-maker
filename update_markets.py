@@ -78,6 +78,7 @@ def sort_df(df):
 def save_market_quality_data(market_quality_df):
     """
     Save market quality data to the 'Markets Quality' worksheet.
+    Only updates if more than 5 minutes have passed since the last update.
     
     Args:
         market_quality_df (pd.DataFrame): DataFrame containing market quality analysis results
@@ -106,36 +107,55 @@ def save_market_quality_data(market_quality_df):
         question = market_quality_df['question'].iloc[0]
         
         # Check if a row with this question already exists
+        should_update = True
         if not existing_df.empty and 'question' in existing_df.columns:
             # Find existing row with the same question
             existing_row_idx = existing_df[existing_df['question'] == question].index
             
             if len(existing_row_idx) > 0:
-                # Update existing row
-                for col in market_quality_df.columns:
-                    if col in existing_df.columns:
-                        existing_df.loc[existing_row_idx[0], col] = market_quality_df[col].iloc[0]
-                    else:
-                        # Add new column if it doesn't exist
-                        existing_df[col] = ''
-                        existing_df.loc[existing_row_idx[0], col] = market_quality_df[col].iloc[0]
+                # Check if last_updated column exists and has a timestamp
+                if 'last_updated' in existing_df.columns:
+                    last_updated_str = existing_df.loc[existing_row_idx[0], 'last_updated']
+                    if pd.notna(last_updated_str) and last_updated_str != '':
+                        try:
+                            last_updated = pd.to_datetime(last_updated_str)
+                            current_time = pd.Timestamp.now()
+                            time_diff = current_time - last_updated
+                            
+                            # Only update if more than 5 minutes have passed
+                            if time_diff.total_seconds() < 300:  # 300 seconds = 5 minutes
+                                should_update = False
+                                print(f"Skipping market quality update for '{question}' - last updated {time_diff.total_seconds():.0f} seconds ago")
+                        except:
+                            # If there's an error parsing the timestamp, proceed with update
+                            pass
                 
-                # Add timestamp
-                existing_df.loc[existing_row_idx[0], 'last_updated'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+                if should_update:
+                    # Update existing row
+                    for col in market_quality_df.columns:
+                        if col in existing_df.columns:
+                            existing_df.loc[existing_row_idx[0], col] = market_quality_df[col].iloc[0]
+                        else:
+                            # Add new column if it doesn't exist
+                            existing_df[col] = ''
+                            existing_df.loc[existing_row_idx[0], col] = market_quality_df[col].iloc[0]
+                    
+                    # Add timestamp
+                    existing_df.loc[existing_row_idx[0], 'last_updated'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
             else:
-                # Add new row
+                # Add new row (always update for new questions)
                 new_row = market_quality_df.copy()
                 new_row['last_updated'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
                 existing_df = pd.concat([existing_df, new_row], ignore_index=True)
         else:
-            # If no existing data, use the new data
+            # If no existing data, use the new data (always update for first time)
             existing_df = market_quality_df.copy()
             existing_df['last_updated'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        # Update the worksheet with the combined data
-        update_sheet(existing_df, wk_quality)
-        
-        print(f"Market quality data saved for question: {question}")
+        # Only update the worksheet if we should update
+        if should_update:
+            update_sheet(existing_df, wk_quality)
+            print(f"Market quality data saved for question: {question}")
         
     except Exception as e:
         print(f"Error saving market quality data: {str(e)}")

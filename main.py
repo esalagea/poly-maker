@@ -66,7 +66,7 @@ def update_periodically():
             update_orders()
 
             # Update market data every 6th cycle (30 seconds)
-            if i % 6 == 0:
+            if i % 12 == 0:
                 update_markets()
                 i = 1
                     

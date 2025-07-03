@@ -8,6 +8,7 @@ from trading import perform_trade
 import time 
 import asyncio
 from poly_data.data_utils import set_position, set_order, update_positions
+import json
 
 def process_book_data(asset, json_data):
     global_state.all_data[asset] = {
@@ -77,7 +78,7 @@ def process_user_data(rows):
 
     for row in rows:
         market = row['market']
-        log_message(market, ["PROCESS USER DATA: "] + [str(element) for element in row])
+        log_message(market, "PROCESS USER DATA: " +json.dumps(row))
         side = row['side'].lower()
         token = row['asset_id']
             
@@ -146,5 +147,5 @@ def process_user_data(rows):
                 set_order(token, side, float(row['original_size']) - float(row['size_matched']), row['price'])
                 asyncio.create_task(perform_trade(market))
 
-    else:
-        log_message(market, f"User date received for {market} but its not in")
+        else:
+            log_message(market, f"User date received for {market} but its not in global_state.REVERSE_TOKENS")
