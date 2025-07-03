@@ -99,6 +99,7 @@ def fetch_and_process_data(ONLY_SELECTED_MARKETS):
     else:
         # Keep current behavior - process all markets
         all_results = get_all_results(all_df, client)
+
     m_data, all_markets = get_markets(all_results, sel_df, maker_reward=0.75)
 
     print(f'{pd.to_datetime("now")}: Fetched all markets data of length {len(all_markets)}.')

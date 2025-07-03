@@ -7,6 +7,7 @@ import pandas as pd             # Data analysis library
 import math                     # Mathematical functions
 import poly_data.global_state as global_state
 import poly_data.CONSTANTS as CONSTANTS
+from poly_data.analysis_utils import analyze_market_quality
 
 # Import utility functions for trading
 from poly_data.trading_utils import get_best_bid_ask_deets, get_order_prices, get_buy_sell_amount, round_down, round_up
@@ -98,6 +99,10 @@ def send_sell_order(order):
 # Dictionary to store locks for each market to prevent concurrent trading on the same market
 market_locks = {}
 
+
+
+
+
 async def perform_trade(market):
     """
     Main trading function that handles market making for a specific market.
@@ -118,13 +123,22 @@ async def perform_trade(market):
     row = global_state.df[global_state.df['condition_id'] == market].iloc[0]
     market_making = row['market_making']
 
-    if market_making == "STOP":
-        log_message(market, "Market Making option is set to STOP. No trading.")
-        return
+
 
     # Use lock to prevent concurrent trading on the same market
     async with market_locks[market]:
         try:
+
+            # Get trading parameters for this market type
+            params = global_state.params[row['param_type']]
+
+            market_quality_df = analyze_market_quality(market, row, params)
+
+            if market_making == "STOP":
+                log_message(market, "Market Making option is set to STOP. No trading.")
+                return
+
+
             client = global_state.client
             # Get market details from the configuration
 
@@ -132,8 +146,7 @@ async def perform_trade(market):
             round_length = len(str(row['tick_size']).split(".")[1])
 
 
-            # Get trading parameters for this market type
-            params = global_state.params[row['param_type']]
+
             
             # Create a list with both outcomes for the market
             yes_no_outcomes = [
