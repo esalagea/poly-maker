@@ -4,7 +4,7 @@ import sys
 from data_updater.trading_utils import get_clob_client
 from data_updater.google_utils import get_spreadsheet
 from data_updater.find_markets import get_sel_df, get_all_markets, get_all_results, get_markets, add_volatility_to_df
-from gspread_dataframe import set_with_dataframe
+from gspread_dataframe import set_with_dataframe, get_as_dataframe
 import traceback
 
 # Initialize global variables
@@ -74,6 +74,72 @@ def sort_df(df):
     sorted_df = sorted_df.drop(columns=['std_gm_reward_per_100', 'std_volatility_sum', 'bid_score', 'ask_score', 'composite_score'])
     
     return sorted_df
+
+def save_market_quality_data(market_quality_df):
+    """
+    Save market quality data to the 'Markets Quality' worksheet.
+    
+    Args:
+        market_quality_df (pd.DataFrame): DataFrame containing market quality analysis results
+    """
+    try:
+        # Get the spreadsheet instance
+        spreadsheet = get_spreadsheet()
+        
+        # Get or create the 'Markets Quality' worksheet
+        try:
+            wk_quality = spreadsheet.worksheet("Markets Quality")
+        except:
+            # Create the worksheet if it doesn't exist
+            wk_quality = spreadsheet.add_worksheet(title="Markets Quality", rows=1000, cols=50)
+        
+        # Get existing data from the worksheet
+        try:
+            existing_df = get_as_dataframe(wk_quality)
+            # Remove empty rows
+            existing_df = existing_df.dropna(how='all')
+        except:
+            # If worksheet is empty, create an empty DataFrame
+            existing_df = pd.DataFrame()
+        
+        # Extract the question from market_quality_df
+        question = market_quality_df['question'].iloc[0]
+        
+        # Check if a row with this question already exists
+        if not existing_df.empty and 'question' in existing_df.columns:
+            # Find existing row with the same question
+            existing_row_idx = existing_df[existing_df['question'] == question].index
+            
+            if len(existing_row_idx) > 0:
+                # Update existing row
+                for col in market_quality_df.columns:
+                    if col in existing_df.columns:
+                        existing_df.loc[existing_row_idx[0], col] = market_quality_df[col].iloc[0]
+                    else:
+                        # Add new column if it doesn't exist
+                        existing_df[col] = ''
+                        existing_df.loc[existing_row_idx[0], col] = market_quality_df[col].iloc[0]
+                
+                # Add timestamp
+                existing_df.loc[existing_row_idx[0], 'last_updated'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                # Add new row
+                new_row = market_quality_df.copy()
+                new_row['last_updated'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+                existing_df = pd.concat([existing_df, new_row], ignore_index=True)
+        else:
+            # If no existing data, use the new data
+            existing_df = market_quality_df.copy()
+            existing_df['last_updated'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Update the worksheet with the combined data
+        update_sheet(existing_df, wk_quality)
+        
+        print(f"Market quality data saved for question: {question}")
+        
+    except Exception as e:
+        print(f"Error saving market quality data: {str(e)}")
+        traceback.print_exc()
 
 def fetch_and_process_data(ONLY_SELECTED_MARKETS):
     global spreadsheet, client, wk_all, wk_vol, sel_df

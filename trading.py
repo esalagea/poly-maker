@@ -8,6 +8,7 @@ import math                     # Mathematical functions
 import poly_data.global_state as global_state
 import poly_data.CONSTANTS as CONSTANTS
 from poly_data.analysis_utils import analyze_market_quality
+from update_markets import save_market_quality_data
 
 # Import utility functions for trading
 from poly_data.trading_utils import get_best_bid_ask_deets, get_order_prices, get_buy_sell_amount, round_down, round_up
@@ -54,7 +55,7 @@ def send_buy_order(order):
         # Only place orders with prices between 0.1 and 0.9 to avoid extreme positions
         if order['price'] >= 0.1 and order['price'] < 0.9:
             log_message(order['market'], f'BUY ORDER:: Creating new order for {order["size"]} at {order["price"]}')
-            log_message(order['market'], json.dumps(order))
+            # TODO: FIXME - the order contains a Pandas series - log_message(order['market'], json.dumps(order))
             client.create_order(
                 order['token'], 
                 'BUY', 
@@ -86,7 +87,7 @@ def send_sell_order(order):
         client.cancel_all_asset(order['token'])
 
     log_message(order['market'], f'SELL ORDER:: Creating new order for {order["size"]} at {order["price"]}')
-    log_message(order['market'], json.dumps(order))
+    # TODO: FIXME - the order contains a Pandas series - log_message(order['market'], json.dumps(order))
     
     client.create_order(
         order['token'], 
@@ -133,8 +134,9 @@ async def perform_trade(market):
             params = global_state.params[row['param_type']]
 
             market_quality_df = analyze_market_quality(market, row, params)
+            save_market_quality_data(market_quality_df)
 
-            if market_making == "STOP":
+            if market_making == "STOP" or market_making == "":
                 log_message(market, "Market Making option is set to STOP. No trading.")
                 return
 
