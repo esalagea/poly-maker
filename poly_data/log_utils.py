@@ -55,30 +55,24 @@ def log_market_conditions_if_changed(market, question, yes_no_outcome, orders, p
                        f"Position: {position}, Trade Size (constant): {trade_size}, "
                        f"Order Prepared: {prepared_str}")
 
-    # Use generic log_message with single message_id for duplicate detection
+    # Use log_message_deduplicated with single message_id for duplicate detection
     message_id = f"{yes_no_outcome['answer']}_market_conditions_and_positions"
-    log_message(market, message_id, combined_message)
+    log_message_deduplicated(market, message_id, combined_message)
 
 
-def log_message(market_name, message_id=None, *messages):
+def log_message_deduplicated(market_name, message_id, *messages):
     """
-    Log a message to both console and market-specific log file.
-    If message_id is provided, applies duplicate detection logic.
+    Log a message with duplicate detection logic.
 
     Args:
         market_name (str): Market name for the log file (sanitized for filename)
-        message_id (str, optional): Unique identifier for this message type for duplicate detection
+        message_id (str): Unique identifier for this message type for duplicate detection
         *messages: Message parts to join and log
         
     Returns:
         bool: True if message was logged, False if skipped due to duplication
     """
     message = " ".join(str(msg) for msg in messages)
-    
-    # If no message_id provided, log directly (backward compatibility)
-    if message_id is None:
-        _write_log_message(market_name, message)
-        return True
     
     # Apply duplicate detection logic
     message_key = f"{market_name}_{message_id}"
@@ -111,6 +105,19 @@ def log_message(market_name, message_id=None, *messages):
     _write_log_message(market_name, message)
     last_logged_messages[message_key] = message
     return True
+
+
+def log_message(market_name, *messages):
+    """
+    Log a message to both console and market-specific log file.
+    This is the backward-compatible version that logs directly without duplicate detection.
+
+    Args:
+        market_name (str): Market name for the log file (sanitized for filename)
+        *messages: Message parts to join and log
+    """
+    message = " ".join(str(msg) for msg in messages)
+    _write_log_message(market_name, message)
 
 
 

@@ -14,7 +14,7 @@ from update_markets import save_market_quality_data
 from poly_data.trading_utils import get_best_bid_ask_deets, get_order_prices, get_buy_sell_amount, round_down, round_up
 from poly_data.data_utils import get_position, get_order, set_position
 
-from poly_data.log_utils import log_message
+from poly_data.log_utils import log_message, log_message_deduplicated
 from poly_data.log_utils import log_market_conditions_if_changed
 
 # Create directory for storing position risk information
@@ -114,18 +114,6 @@ def send_buy_order(order, existing_orders=None, log_message_text=None):
         # Skip order creation - do not log anything
         return False
 
-    # Calculate minimum acceptable price based on market spread
-    incentive_start = order['mid_price'] - order['max_spread']/100
-
-    # Don't place orders that are below incentive threshold
-    if order['price'] < incentive_start:
-        log_message(market, f'Not creating new order because order price is less than incentive start price - BUY {order["size"]} @ {order["price"]} < {incentive_start}. Mid price: {order["mid_price"]}')
-        return False
-
-    # Only place orders with prices between 0.1 and 0.9 to avoid extreme positions
-    if not (order['price'] >= 0.1 and order['price'] < 0.9):
-        log_message(market, f"Not creating buy order because its outside acceptable price range (0.1-0.9) - BUY {order['size']} @ {order['price']}")
-        return False
 
     # Cancel existing orders for this token to avoid conflicts
     if current_orders.get('buy', {}).get('size', 0) > 0 or current_orders.get('sell', {}).get('size', 0) > 0:
@@ -452,69 +440,39 @@ def apply_merge_positions_logic(client, market, row):
             set_position(row['token2'], 'SELL', scaled_amt, 0, 'merge')
 
 
-def base_buy_conditions_met(market, position, buy_amount, row, market_quality_row=None, token=None, orders=None, processed_market_data=None, params=None):
-    # ------- BUY ORDER LOGIC -------
-    # Only buy if:
-    # 1. Market quality score is above 50
-    # 2. Position is less than 90% of target size
-    # 3. Position is less than absolute cap (250)
-    # 4. Buy amount is above minimum size
-    # 5. Volatility is not too high
-    # 6. No significant reverse position
-    # 7. Overall ratio is not negative
+def base_buy_conditions_met(market, position, buy_amount, row, market_quality_row=None, token=None, orders=None, processed_market_data=None, params=None, order_price=None, mid_price=None, max_spread=None):
+    """
+    Check if buy conditions are met and return list of failed conditions.
+    
+    Returns:
+        list: Empty list if all conditions met, otherwise list of failure messages
+    """
+    failed_conditions = []
     
     # Check market quality score first
     if market_quality_row is not None:
         market_quality_score = market_quality_row.get('score', None) if isinstance(market_quality_row, dict) else market_quality_row.iloc[0].get('score', None) if hasattr(market_quality_row, 'iloc') else None
         
         if market_quality_score is None or market_quality_score <= 50:
-            log_message(market,
-                        "Buy check failed: market quality score too low",
-                        f"score={market_quality_score}"
-                        )
-            return False
+            failed_conditions.append(f"Market quality score too low: score={market_quality_score}")
     else:
-        log_message(market,
-                    "Buy check failed: market quality data not available"
-                    )
-        return False
+        failed_conditions.append("Market quality data not available")
     
     if position >= 0.9 * row['trade_size']:
-        log_message(market,
-                    "Buy check failed: position exceeds 90% of trade size",
-                    f"position={position}",
-                    f"trade_size={row['trade_size']}"
-                    )
-        return False
+        failed_conditions.append(f"Position exceeds 90% of trade size: position={position}, trade_size={row['trade_size']}")
 
     if position >= 250:
-        log_message(market,
-                    "Buy check failed: position exceeds 250",
-                    f"position={position}"
-                    )
-        return False
+        failed_conditions.append(f"Position exceeds 250: position={position}")
 
     if buy_amount <= 0:
-        log_message(market,
-                    "Buy check failed: buy_amount is not positive",
-                    f"buy_amount={buy_amount}"
-                    )
-        return False
+        failed_conditions.append(f"Buy amount is not positive: buy_amount={buy_amount}")
 
     if buy_amount < row['min_size']:
-        log_message(market,
-                    "Buy check failed: buy_amount below min_size",
-                    f"buy_amount={buy_amount}",
-                    f"min_size={row['min_size']}"
-                    )
-        return False
+        failed_conditions.append(f"Buy amount below min_size: buy_amount={buy_amount}, min_size={row['min_size']}")
 
     # Condition 1: Volatility check
     if params is not None and row['3_hour'] > params['volatility_threshold']:
-        log_message(market, f'3 Hour Volatility of {row["3_hour"]} is greater than max volatility of {params["volatility_threshold"]}')
-        if token is not None:
-            cancel_orders_with_logging(token, market)
-        return False
+        failed_conditions.append(f"3 Hour Volatility of {row['3_hour']} is greater than max volatility of {params['volatility_threshold']}")
 
     # Condition 2: Reverse position check
     if token is not None:
@@ -522,38 +480,30 @@ def base_buy_conditions_met(market, position, buy_amount, row, market_quality_ro
         rev_pos = get_position(rev_token)
         
         if rev_pos['size'] > row['min_size']:
-            log_message(market, f'Bypassing creation of new buy order because there is a reverse position of size {rev_pos["size"]} - Would be: BUY {buy_amount} @ [price]')
-            if orders is not None and orders['buy']['size'] > CONSTANTS.MIN_MERGE_SIZE:
-                log_message(market, f"Cancelling buy orders because there is a reverse position - Cancelling: BUY {orders['buy']['size']} @ {orders['buy']['price']}")
-                cancel_orders_with_logging(token, market)
-            return False
-
-    # Calculate ratio of buy vs sell liquidity in the market
-    try:
-        overall_ratio = (processed_market_data['bid_sum_within_n_percent']) / (processed_market_data['ask_sum_within_n_percent'])
-    except:
-        overall_ratio = 0
+            failed_conditions.append(f"Reverse position too large: size={rev_pos['size']}, min_size={row['min_size']}")
 
     # Condition 3: Overall ratio check
-    if overall_ratio is not None and overall_ratio < 0:
-        log_message(market, f"Not sending a buy order because overall ratio is {overall_ratio} - Would be: BUY {buy_amount} @ [price]")
-        if token is not None:
-            cancel_orders_with_logging(token, market)
-        return False
+    if processed_market_data is not None:
+        try:
+            overall_ratio = (processed_market_data['bid_sum_within_n_percent']) / (processed_market_data['ask_sum_within_n_percent'])
+        except:
+            overall_ratio = 0
+        
+        if overall_ratio < 0:
+            failed_conditions.append(f"Overall ratio is negative: ratio={overall_ratio}")
 
-    # Check removed
-    # Get reference price from market data
-    # sheet_value = row['best_bid']
-    #
-    # if yes_no_outcome['name'] == 'token2':
-    #     sheet_value = 1 - row['best_ask']
-    #
-    # sheet_value = round(sheet_value, round_length)
+    # Condition 4: Price validation checks
+    if order_price is not None and mid_price is not None and max_spread is not None:
+        # Check incentive start price threshold
+        incentive_start = mid_price - max_spread/100
+        if order_price < incentive_start:
+            failed_conditions.append(f"Order price below incentive threshold: price={order_price} < {incentive_start}, mid_price={mid_price}")
+        
+        # Check price range (0.1 to 0.9)
+        if not (order_price >= 0.1 and order_price < 0.9):
+            failed_conditions.append(f"Order price outside acceptable range (0.1-0.9): price={order_price}")
 
-    # Check if price is far from reference
-    # price_change = abs(order['price'] - sheet_value)
-
-    return True
+    return failed_conditions
 
 def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length, market_quality_row):
     risk_file_name = risk_management_filename(market)
@@ -563,19 +513,18 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
     best_bid = processed_market_data['best_bid']
     # Get current orders for this token
     orders = get_order(token)
-
-
-    position = round_down(get_position(token)['size'], 2)
-
-    if not base_buy_conditions_met(market, position, buy_amount, row, market_quality_row, token, orders, processed_market_data, params):
-        return False
-
-
-
-
     order['size'] = buy_amount
     order['price'] = bid_price
 
+    position = round_down(get_position(token)['size'], 2)
+
+    failed_conditions = base_buy_conditions_met(market, position, buy_amount, row, market_quality_row, token, orders, processed_market_data, params, order['price'], order['mid_price'], order['max_spread'])
+    if failed_conditions:
+        # Log all failed conditions in a single message with duplicate detection
+        conditions_text = "; ".join(failed_conditions)
+        would_be_order = f"BUY {order['size']} @ {order['price']}"
+        log_message_deduplicated(market, "buy_failed_conditions", f"Buy order conditions not met - Would be: {would_be_order}. Reasons: {conditions_text}")
+        return False
 
 
 
