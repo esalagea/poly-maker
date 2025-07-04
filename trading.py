@@ -74,49 +74,78 @@ def cancel_orders_with_logging(token, market=None):
 
 
 
-def send_buy_order(order):
+def send_buy_order(order, existing_orders=None, log_message_text=None):
     """
     Create a BUY order for a specific token.
     
     This function:
-    1. Cancels any existing orders for the token
-    2. Checks if the order price is within acceptable range
-    3. Creates a new buy order if conditions are met
+    1. Checks if the new order is different from existing buy order
+    2. Validates order price and conditions
+    3. Only cancels and creates new order if there are differences and conditions are met
+    4. Logs provided message only if order is actually created
     
     Args:
         order (dict): Order details including token, price, size, and market parameters
+        existing_orders (dict, optional): Current orders for comparison. If None, uses order['orders']
+        log_message_text (str, optional): Custom message to log when order is created
+    
+    Returns:
+        bool: True if order was created, False if skipped
     """
     client = global_state.client
-
-    # Cancel existing orders for this token to avoid conflicts
-    if order['orders']['buy']['size'] > 0 or order['orders']['sell']['size'] > 0:
-        cancel_orders_with_logging(order['token'], order['market'])
+    market = order['market']
+    
+    # Use provided existing_orders or fall back to order['orders']
+    current_orders = existing_orders if existing_orders is not None else order['orders']
+    
+    # Check if new buy order is identical to existing buy order
+    existing_buy = current_orders.get('buy', {})
+    existing_buy_price = existing_buy.get('price', 0)
+    existing_buy_size = existing_buy.get('size', 0)
+    
+    new_price = float(order['price'])
+    new_size = float(order['size'])
+    
+    # Compare with small tolerance for floating point precision
+    price_same = abs(existing_buy_price - new_price) < 0.001
+    size_same = abs(existing_buy_size - new_size) < 0.001
+    
+    if price_same and size_same and existing_buy_size > 0:
+        # Skip order creation - do not log anything
+        return False
 
     # Calculate minimum acceptable price based on market spread
     incentive_start = order['mid_price'] - order['max_spread']/100
 
-    trade = True
-
     # Don't place orders that are below incentive threshold
     if order['price'] < incentive_start:
-        trade = False
+        log_message(market, f'Not creating new order because order price is less than incentive start price - BUY {order["size"]} @ {order["price"]} < {incentive_start}. Mid price: {order["mid_price"]}')
+        return False
 
-    if trade:
-        # Only place orders with prices between 0.1 and 0.9 to avoid extreme positions
-        if order['price'] >= 0.1 and order['price'] < 0.9:
-            log_message(order['market'], f'BUY ORDER:: Creating new order - BUY {order["size"]} @ {order["price"]}')
-            # TODO: FIXME - the order contains a Pandas series - log_message(order['market'], json.dumps(order))
-            client.create_order(
-                order['token'], 
-                'BUY', 
-                order['price'], 
-                order['size'], 
-                True if order['neg_risk'] == 'TRUE' else False
-            )
-        else:
-            log_message(order['market'], f"Not creating buy order because its outside acceptable price range (0.1-0.9) - BUY {order['size']} @ {order['price']}")
+    # Only place orders with prices between 0.1 and 0.9 to avoid extreme positions
+    if not (order['price'] >= 0.1 and order['price'] < 0.9):
+        log_message(market, f"Not creating buy order because its outside acceptable price range (0.1-0.9) - BUY {order['size']} @ {order['price']}")
+        return False
+
+    # Cancel existing orders for this token to avoid conflicts
+    if current_orders.get('buy', {}).get('size', 0) > 0 or current_orders.get('sell', {}).get('size', 0) > 0:
+        cancel_orders_with_logging(order['token'], market)
+
+    # Log the provided message or default message
+    if log_message_text:
+        log_message(market, log_message_text)
     else:
-        log_message(order['market'], f'Not creating new order because order price is less than incentive start price - BUY {order["size"]} @ {order["price"]} < {incentive_start}. Mid price: {order["mid_price"]}')
+        log_message(market, f'BUY ORDER:: Creating new order - BUY {order["size"]} @ {order["price"]}')
+    
+    client.create_order(
+        order['token'], 
+        'BUY', 
+        order['price'], 
+        order['size'], 
+        True if order['neg_risk'] == 'TRUE' else False
+    )
+    
+    return True
 
 
 def send_sell_order(order, existing_orders=None, log_message_text=None):
@@ -499,17 +528,17 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
         return False
 
     # Get reference price from market data
-    sheet_value = row['best_bid']
-
-    if yes_no_outcome['name'] == 'token2':
-        sheet_value = 1 - row['best_ask']
-
-    sheet_value = round(sheet_value, round_length)
+    # sheet_value = row['best_bid']
+    #
+    # if yes_no_outcome['name'] == 'token2':
+    #     sheet_value = 1 - row['best_ask']
+    #
+    # sheet_value = round(sheet_value, round_length)
     order['size'] = buy_amount
     order['price'] = bid_price
 
     # Check if price is far from reference
-    price_change = abs(order['price'] - sheet_value)
+    # price_change = abs(order['price'] - sheet_value)
 
 
     # ------- RISK-OFF PERIOD CHECK -------
@@ -529,8 +558,7 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
     # Don't buy if volatility is high or price is far from reference
     if row['3_hour'] > params['volatility_threshold'] :  # or price_change >= 0.05:
         log_message(market, f'3 Hour Volatility of {row["3_hour"]} is greater than max volatility of '
-                            f'{params["volatility_threshold"]} or price of {order["price"]} is outside '
-                            f'0.05 of {sheet_value}. Cancelling all orders')
+                            f'{params["volatility_threshold"]}')
         cancel_orders_with_logging(order['token'], market)
         return False
 
@@ -555,16 +583,13 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
     # Place new buy order if any of these conditions are met:
     # 1. We can get a better price than current order
     if best_bid > orders['buy']['price']:
-        log_message(market, f"Sending Buy Order for {yes_no_outcome['answer']} [{token}] - NEW: BUY {order['size']} @ {best_bid}, OLD: BUY {orders['buy']['size']} @ {orders['buy']['price']}")
-        send_buy_order(order)
+        send_buy_order(order, orders, f"Sending Buy Order for {yes_no_outcome['answer']} [{token}] - NEW: BUY {order['size']} @ {best_bid}, OLD: BUY {orders['buy']['size']} @ {orders['buy']['price']}")
     # 2. Current position + orders is not enough to reach target
     elif position + orders['buy']['size'] < 0.95 * row['trade_size']:
-        log_message(market, f"Sending Buy Order for {yes_no_outcome['answer']} [{token}] because not enough position + size - NEW: BUY {order['size']} @ {bid_price}, OLD: BUY {orders['buy']['size']} @ {orders['buy']['price']}")
-        send_buy_order(order)
+        send_buy_order(order, orders, f"Sending Buy Order for {yes_no_outcome['answer']} [{token}] because not enough position + size - NEW: BUY {order['size']} @ {bid_price}, OLD: BUY {orders['buy']['size']} @ {orders['buy']['price']}")
     # 3. Our current order is too large and needs to be resized
     elif orders['buy']['size'] > order['size'] * 1.01:
-        log_message(market, f"Resending buy orders for {yes_no_outcome['answer']} [{token}] because open orders are too large - NEW: BUY {order['size']} @ {bid_price}, OLD: BUY {orders['buy']['size']} @ {orders['buy']['price']}")
-        send_buy_order(order)
+        send_buy_order(order, orders, f"Resending buy orders for {yes_no_outcome['answer']} [{token}] because open orders are too large - NEW: BUY {order['size']} @ {bid_price}, OLD: BUY {orders['buy']['size']} @ {orders['buy']['price']}")
 
     return True
     # Commented out logic for cancelling orders when market conditions change
