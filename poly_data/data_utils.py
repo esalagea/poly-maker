@@ -147,7 +147,6 @@ def update_orders():
 
     if len(all_orders) > 0:
             for token in all_orders['asset_id'].unique():
-                
                 if token not in orders:
                     orders[str(token)] = {'buy': {'price': 0, 'size': 0}, 'sell': {'price': 0, 'size': 0}}
 

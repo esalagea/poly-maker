@@ -1,4 +1,5 @@
 import pandas as pd
+import poly_data.global_state as global_state
 
 
 
@@ -126,14 +127,28 @@ def _write_log_message(market_name, message):
     Internal function to write message to console and log file.
     
     Args:
-        market_name (str): Market name for the log file (sanitized for filename)
+        market_name (str): Market identifier (condition_id) to look up question for filename
         message (str): Message to log
     """
     # Print to console
     print(message)
 
-    # Sanitize market name for filename (remove invalid characters)
-    safe_filename = "".join(c for c in market_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+    # Get market question for log file name
+    log_filename = market_name  # Fallback to market_name if lookup fails
+    
+    try:
+        if global_state.df is not None and not global_state.df.empty:
+            # Look up the question for this market
+            matching_row = global_state.df[global_state.df['condition_id'] == market_name]
+            if not matching_row.empty:
+                question = matching_row.iloc[0]['question']
+                log_filename = question
+    except Exception:
+        # If lookup fails, use market_name as fallback
+        pass
+
+    # Sanitize filename (remove invalid characters)
+    safe_filename = "".join(c for c in log_filename if c.isalnum() or c in (' ', '-', '_')).rstrip()
     safe_filename = safe_filename.replace(' ', '_')[:100]  # Limit length and replace spaces
 
     # Write to log file

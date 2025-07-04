@@ -116,6 +116,10 @@ def save_market_quality_data(market_quality_df):
             # If worksheet is empty, create an empty DataFrame
             existing_df = pd.DataFrame()
         
+        # Clean invalid float values before saving
+        market_quality_df = market_quality_df.replace([float('inf'), float('-inf')], None)
+        market_quality_df = market_quality_df.fillna('')
+        
         # Extract the question from market_quality_df
         question = market_quality_df['question'].iloc[0]
         
@@ -145,6 +149,10 @@ def save_market_quality_data(market_quality_df):
             # If no existing data, use the new data
             existing_df = market_quality_df.copy()
             existing_df['last_updated'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Clean the final DataFrame before updating sheet
+        existing_df = existing_df.replace([float('inf'), float('-inf')], None)
+        existing_df = existing_df.fillna('')
         
         # Update the worksheet
         update_sheet(existing_df, wk_quality)

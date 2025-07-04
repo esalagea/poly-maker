@@ -22,8 +22,8 @@ if not os.path.exists('positions/'):
     os.makedirs('positions/')
 
 # Create directory for storing trading logs
-if not os.path.exists('log/'):
-    os.makedirs('log/')
+if not os.path.exists('log_old/'):
+    os.makedirs('log_old/')
 
 def cancel_orders_with_logging(token, market=None):
     """

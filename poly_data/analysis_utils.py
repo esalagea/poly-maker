@@ -170,13 +170,13 @@ def analyze_market_quality(market, row, params):
 
     # Final recommendation
     if score >= 80:
-        recommendation = "EXCELLENT - Great for market making"
+        recommendation = "EXCELLENT"
     elif score >= 60:
-        recommendation = "GOOD - Suitable for market making"
+        recommendation = "GOOD"
     elif score >= 40:
-        recommendation = "FAIR - Proceed with caution"
+        recommendation = "FAIR"
     else:
-        recommendation = "POOR - Avoid market making"
+        recommendation = "POOR"
 
     # Create results dataframe
     results = pd.DataFrame([{
