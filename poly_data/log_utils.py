@@ -47,60 +47,81 @@ def log_market_conditions_if_changed(market, question, yes_no_outcome, orders, p
     
     prepared_str = ", ".join(prepared_list) if prepared_list else "None"
 
-    # Create the two messages
-    message1 = (f"\nFor {yes_no_outcome['answer']}. Orders: {orders_str} Position: {position}, "
-                f"avgPrice: {avgPrice}, Best Bid: {best_bid}, Best Ask: {best_ask}, "
-                f"Our optimal bid Price: {bid_price}, Our optimal ask Price: {ask_price}, Mid Price: {mid_price}")
+    # Create combined message with header
+    combined_message = (f"\n\n{pd.Timestamp.utcnow().tz_localize(None)}: {question}\n"
+                       f"For {yes_no_outcome['answer']}. Orders: {orders_str} Position: {position}, "
+                       f"avgPrice: {avgPrice}, Best Bid: {best_bid}, Best Ask: {best_ask}, "
+                       f"Our optimal bid Price: {bid_price}, Our optimal ask Price: {ask_price}, Mid Price: {mid_price}\n"
+                       f"Position: {position}, Trade Size (constant): {trade_size}, "
+                       f"Order Prepared: {prepared_str}")
 
-    message2 = (f"Position: {position}, Trade Size (constant): {trade_size}, "
-                f"Order Prepared: {prepared_str}")
-
-    # Check if these messages are the same as the last logged ones for this market + outcome
-    current_messages = (message1, message2)
-    
-    # Create unique key for market + outcome combination
-    market_outcome_key = f"{market}_{yes_no_outcome['answer']}"
-
-    # Initialize skip counter for this market+outcome if it doesn't exist
-    if market_outcome_key not in skipped_log_counts:
-        skipped_log_counts[market_outcome_key] = 0
-
-    if market_outcome_key in last_logged_messages:
-        if last_logged_messages[market_outcome_key] == current_messages:
-            # Increment skip counter
-            skipped_log_counts[market_outcome_key] += 1
-
-            # Check if we've skipped 10 events
-            if skipped_log_counts[market_outcome_key] >= 10:
-                log_message(market, f"[SKIPPED] {skipped_log_counts[market_outcome_key]} identical market condition log events were not logged to reduce spam for {yes_no_outcome['answer']}")
-                skipped_log_counts[market_outcome_key] = 0  # Reset counter
-
-            return
-
-    # Reset skip counter when we log (since conditions changed)
-    if skipped_log_counts[market_outcome_key] > 0:
-        log_message(market, f"[SKIPPED] {skipped_log_counts[market_outcome_key]} identical market condition log events were not logged for {yes_no_outcome['answer']}")
-        skipped_log_counts[market_outcome_key] = 0
-
-    log_message(market, f"\n\n{pd.Timestamp.utcnow().tz_localize(None)}: {question}")
-    # Log the messages since they're different or first time
-    log_message(market, message1)
-    log_message(market, message2)
-
-    # Store the current messages for future comparison
-    last_logged_messages[market_outcome_key] = current_messages
+    # Use generic log_message with single message_id for duplicate detection
+    message_id = f"{yes_no_outcome['answer']}_market_conditions_and_positions"
+    log_message(market, message_id, combined_message)
 
 
-def log_message(market_name,  *messages):
+def log_message(market_name, message_id=None, *messages):
     """
     Log a message to both console and market-specific log file.
+    If message_id is provided, applies duplicate detection logic.
 
+    Args:
+        market_name (str): Market name for the log file (sanitized for filename)
+        message_id (str, optional): Unique identifier for this message type for duplicate detection
+        *messages: Message parts to join and log
+        
+    Returns:
+        bool: True if message was logged, False if skipped due to duplication
+    """
+    message = " ".join(str(msg) for msg in messages)
+    
+    # If no message_id provided, log directly (backward compatibility)
+    if message_id is None:
+        _write_log_message(market_name, message)
+        return True
+    
+    # Apply duplicate detection logic
+    message_key = f"{market_name}_{message_id}"
+    
+    # Initialize skip counter if it doesn't exist
+    if message_key not in skipped_log_counts:
+        skipped_log_counts[message_key] = 0
+    
+    # Check if message has changed
+    message_changed = True
+    if message_key in last_logged_messages:
+        if last_logged_messages[message_key] == message:
+            message_changed = False
+            skipped_log_counts[message_key] += 1
+    
+    # If message hasn't changed, check skip counter
+    if not message_changed:
+        # Report skipped events every 100 iterations
+        if skipped_log_counts[message_key] >= 100:
+            _write_log_message(market_name, f"[SKIPPED] {skipped_log_counts[message_key]} identical '{message_id}' log events were not logged to reduce spam")
+            skipped_log_counts[message_key] = 0  # Reset counter
+        return False
+    
+    # Message has changed - report any pending skipped messages
+    if skipped_log_counts[message_key] > 0:
+        _write_log_message(market_name, f"[SKIPPED] {skipped_log_counts[message_key]} identical '{message_id}' log events were not logged")
+        skipped_log_counts[message_key] = 0
+    
+    # Log the new message and store it
+    _write_log_message(market_name, message)
+    last_logged_messages[message_key] = message
+    return True
+
+
+
+def _write_log_message(market_name, message):
+    """
+    Internal function to write message to console and log file.
+    
     Args:
         market_name (str): Market name for the log file (sanitized for filename)
         message (str): Message to log
     """
-    message = " ".join(str(msg) for msg in messages)
-
     # Print to console
     print(message)
 

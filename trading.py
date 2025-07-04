@@ -541,7 +541,7 @@ def base_buy_conditions_met(market, position, buy_amount, row, market_quality_ro
             cancel_orders_with_logging(token, market)
         return False
 
-    # Check removed 
+    # Check removed
     # Get reference price from market data
     # sheet_value = row['best_bid']
     #
