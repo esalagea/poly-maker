@@ -134,9 +134,6 @@ def round_up(number, decimals):
 
 
 def get_buy_sell_amount(position, bid_price, row):
-    buy_amount = 0
-    sell_amount = 0
-
     sell_amount = position
     buy_amount = row['trade_size'] - position
 

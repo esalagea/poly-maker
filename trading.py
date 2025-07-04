@@ -223,6 +223,8 @@ async def perform_trade(market):
     # Use lock to prevent concurrent trading on the same market
     async with market_locks[market]:
         try:
+            if row['trade_size'] == "":
+                row['trade_size'] = row['min_size']
 
             # Get trading parameters for this market type
             params = global_state.params[row['param_type']]
@@ -316,95 +318,14 @@ async def perform_trade(market):
                 )
 
                 # ------- SELL ORDER LOGIC -------
-                if sell_amount > 0:
-                    # Skip if we have no average price (no real position)
-                    if avgPrice == 0:
-                        log_message(market, "Avg Price is 0. Skipping")
-                        continue
-
-                    order['size'] = sell_amount
-                    order['price'] = ask_price
-
-                    # Get fresh market data for risk assessment
-                    n_deets = get_best_bid_ask_deets(market, yes_no_outcome['name'], 100, 0.1)
-                    
-                    # Calculate current market price and spread
-                    mid_price = round_up((n_deets['best_bid'] + n_deets['best_ask']) / 2, round_length)
-                    spread = round(n_deets['best_ask'] - n_deets['best_bid'], 2)
-
-                    # Calculate current profit/loss on position
-                    pnl = (mid_price - avgPrice) / avgPrice * 100
-
-                    log_message(market, f"Mid Price: {mid_price}, Spread: {spread}, PnL: {pnl}")
-                    
-                    # Prepare risk details for tracking
-                    risk_details = {
-                        'time': str(pd.Timestamp.utcnow().tz_localize(None)),
-                        'question': row['question']
-                    }
-
-                    try:
-                        ratio = (n_deets['bid_sum_within_n_percent']) / (n_deets['ask_sum_within_n_percent'])
-                    except:
-                        ratio = 0
-
-                    pos_to_sell = sell_amount  # Amount to sell in risk-off scenario
-
-                    # ------- STOP-LOSS LOGIC -------
-                    # Trigger stop-loss if either:
-                    # 1. PnL is below threshold and spread is tight enough to exit
-                    # 2. Volatility is too high
-                    if (pnl < params['stop_loss_threshold'] and spread <= params['spread_threshold']) or row['3_hour'] > params['volatility_threshold']:
-                        risk_details['msg'] = (f"STOP LOSS ORDER:: Selling {pos_to_sell} because spread is {spread} and pnl is {pnl} "
-                                              f"and ratio is {ratio} and 3 hour volatility is {row['3_hour']}")
-                        log_message(market, "Stop loss Triggered: " + risk_details['msg'])
-
-                        # Sell at market best bid to ensure execution
-                        order['size'] = pos_to_sell
-                        order['price'] = n_deets['best_bid']
-
-                        # Set period to avoid trading after stop-loss
-                        risk_details['sleep_till'] = str(pd.Timestamp.utcnow().tz_localize(None) + 
-                                                        pd.Timedelta(hours=params['sleep_period']))
-
-                        send_sell_order(order, None, f"STOP LOSS ORDER:: Risking off - SELL {order['size']} @ {order['price']}")
-                        client.cancel_all_market(market)
-
-                        # Save risk details to file
-                        open(risk_management_filename(market), 'w').write(json.dumps(risk_details))
-                        continue
+                if sell_amount > 0 and check_and_execute_stop_loss(market, row, yes_no_outcome, order, sell_amount, avgPrice, ask_price, round_length, params, client):
+                    continue
 
                 send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length, market_quality_df)
                         
                 # ------- TAKE PROFIT / SELL ORDER MANAGEMENT -------            
                 if sell_amount > 0:
-                    order['size'] = sell_amount
-                    
-                    # Calculate take-profit price based on average cost
-                    tp_price = round_up(avgPrice + (avgPrice * params['take_profit_threshold']/100), round_length)
-                    order['price'] = round_up(tp_price if ask_price < tp_price else ask_price, round_length)
-                    
-                    tp_price = float(tp_price)
-                    order_price = float(orders['sell']['price'])
-                    
-                    # Calculate % difference between current order and ideal price
-                    diff = abs(order_price - tp_price)/tp_price * 100
-
-                    # Update sell order if:
-                    # 1. Current order price is significantly different from target
-                    if diff > 2:
-                        send_sell_order(order, orders, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because price deviant - NEW: SELL {order['size']} @ {order['price']}, OLD: SELL {orders['sell']['size']} @ {order_price} (diff: {diff}%)")
-                    # 2. Current order size is too small for our position
-                    elif orders['sell']['size'] < position * 0.97:
-                        send_sell_order(order, orders, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because not enough sell size - NEW: SELL {order['size']} @ {order['price']}, OLD: SELL {orders['sell']['size']} @ {orders['sell']['price']} (Position: {position})")
-                    
-                    # Commented out additional conditions for updating sell orders
-                    # elif orders['sell']['price'] < ask_price:
-                    #     print(f"Updating Sell Order for {token} because its not at the right price")
-                    #     send_sell_order(order)
-                    # elif best_ask_size < orders['sell']['size'] * 0.98 and abs(best_ask - second_best_ask) > 0.03...:
-                    #     print(f"Cancelling sell orders because best size is less than 90% of open orders...")
-                    #     send_sell_order(order)
+                    handle_take_profit_orders(market, token, order, sell_amount, avgPrice, ask_price, orders, position, params, round_length, yes_no_outcome, best_bid, best_ask)
 
         except Exception as ex:
             log_message(market, f"Error performing trade for {market}: {str(ex)}\n{traceback.format_exc()}")
@@ -413,6 +334,141 @@ async def perform_trade(market):
         # Clean up memory and introduce a small delay
         gc.collect()
         await asyncio.sleep(2)
+
+
+def check_and_execute_stop_loss(market, row, yes_no_outcome, order, sell_amount, avgPrice, ask_price, round_length, params, client):
+    """
+    Check if stop-loss conditions are met and execute stop-loss if needed.
+    
+    Args:
+        market: Market identifier
+        row: Market data row
+        yes_no_outcome: Outcome details
+        order: Order object to modify
+        sell_amount: Amount to sell
+        avgPrice: Average price of position
+        ask_price: Current ask price
+        round_length: Decimal precision
+        params: Trading parameters
+        client: Trading client
+        
+    Returns:
+        bool: True if stop-loss was triggered and executed, False otherwise
+    """
+    # Skip if we have no average price (no real position)
+    if avgPrice == 0:
+        log_message(market, "Avg Price is 0. Skipping")
+        return True  # Return True to continue to next iteration
+    
+    order['size'] = sell_amount
+    order['price'] = ask_price
+
+    # Get fresh market data for risk assessment
+    n_deets = get_best_bid_ask_deets(market, yes_no_outcome['name'], 100, 0.1)
+    
+    # Calculate current market price and spread
+    mid_price = round_up((n_deets['best_bid'] + n_deets['best_ask']) / 2, round_length)
+    spread = round(n_deets['best_ask'] - n_deets['best_bid'], 2)
+
+    # Calculate current profit/loss on position
+    pnl = (mid_price - avgPrice) / avgPrice * 100
+    
+    # Prepare risk details for tracking
+    risk_details = {
+        'time': str(pd.Timestamp.utcnow().tz_localize(None)),
+        'question': row['question']
+    }
+
+    try:
+        ratio = (n_deets['bid_sum_within_n_percent']) / (n_deets['ask_sum_within_n_percent'])
+    except:
+        ratio = 0
+
+    pos_to_sell = sell_amount  # Amount to sell in risk-off scenario
+
+    # ------- STOP-LOSS LOGIC -------
+    # Trigger stop-loss if either:
+    # 1. PnL is below threshold and spread is tight enough to exit
+    # 2. Volatility is too high
+    if (pnl < params['stop_loss_threshold'] and spread <= params['spread_threshold']) or row['3_hour'] > params['volatility_threshold']:
+        risk_details['msg'] = (f"STOP LOSS ORDER:: Selling {pos_to_sell} because spread is {spread} and pnl is {pnl} "
+                              f"and ratio is {ratio} and 3 hour volatility is {row['3_hour']}")
+        log_message(market, "Stop loss Triggered: " + risk_details['msg'])
+
+        # Sell at market best bid to ensure execution
+        order['size'] = pos_to_sell
+        order['price'] = n_deets['best_bid']
+
+        # Set period to avoid trading after stop-loss
+        risk_details['sleep_till'] = str(pd.Timestamp.utcnow().tz_localize(None) + 
+                                        pd.Timedelta(hours=params['sleep_period']))
+
+        send_sell_order(order, None, f"STOP LOSS ORDER:: Risking off - SELL {order['size']} @ {order['price']}")
+        client.cancel_all_market(market)
+
+        # Save risk details to file
+        open(risk_management_filename(market), 'w').write(json.dumps(risk_details))
+        return True  # Stop-loss triggered, skip to next iteration
+    
+    return False  # No stop-loss triggered, continue with normal logic
+
+
+def handle_take_profit_orders(market, token, order, sell_amount, avgPrice, ask_price, orders, position, params, round_length, yes_no_outcome, best_bid, best_ask):
+    """
+    Handle take profit sell order management.
+    
+    Args:
+        market: Market identifier
+        token: Token identifier
+        order: Order object to modify
+        sell_amount: Amount to sell
+        avgPrice: Average price of position
+        ask_price: Current ask price
+        orders: Current orders for the token
+        position: Current position size
+        params: Trading parameters
+        round_length: Decimal precision
+        yes_no_outcome: Outcome details for token name
+        best_bid: Current best bid price
+        best_ask: Current best ask price
+    """
+    order['size'] = sell_amount
+    
+    # Calculate take-profit price based on average cost
+    tp_price = round_up(avgPrice + (avgPrice * params['take_profit_threshold']/100), round_length)
+    order['price'] = round_up(tp_price if ask_price < tp_price else ask_price, round_length)
+    
+    # Calculate market metrics for logging
+    mid_price = (best_bid + best_ask) / 2
+    spread = round(best_ask - best_bid, 4)
+    pnl = (mid_price - avgPrice) / avgPrice * 100 if avgPrice > 0 else 0
+    
+    tp_price = float(tp_price)
+    order_price = float(orders['sell']['price'])
+    
+    # Calculate % difference between current order and ideal price
+    diff = abs(order_price - tp_price)/tp_price * 100
+
+    # Log comprehensive take profit information
+    would_be_order = f"SELL {order['size']} @ {order['price']}"
+    log_message_deduplicated(
+        market, 
+        f"{yes_no_outcome['answer']}_take_profit_analysis",
+        f"TAKE PROFIT ANALYSIS for {yes_no_outcome['answer']} - Would be: {would_be_order}. "
+        f"Mid Price: {mid_price:.4f}, Spread: {spread:.4f}, PnL: {pnl:.2f}%, "
+        f"Position: {position}, Sell Amount: {sell_amount}, Avg Price: {avgPrice:.4f}, "
+        f"TP Price: {tp_price:.4f}, Current Order Price: {order_price:.4f}, "
+        f"Price Diff: {diff:.2f}%, Take Profit Threshold: {params['take_profit_threshold']}%, "
+        f"Order Size Coverage: {orders['sell']['size']}/{position * 0.97:.1f}"
+    )
+
+    # Update sell order if:
+    # 1. Current order price is significantly different from target
+    if diff > 2:
+        send_sell_order(order, orders, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because price deviant - NEW: SELL {order['size']} @ {order['price']}, OLD: SELL {orders['sell']['size']} @ {order_price} (diff: {diff}%)")
+    # 2. Current order size is too small for our position
+    elif orders['sell']['size'] < position * 0.97:
+        send_sell_order(order, orders, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because not enough sell size - NEW: SELL {order['size']} @ {order['price']}, OLD: SELL {orders['sell']['size']} @ {orders['sell']['price']} (Position: {position})")
 
 
 def apply_merge_positions_logic(client, market, row):
@@ -538,7 +594,7 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
 
         log_message(market, f"Risk details: {risk_details}, current_time: {current_time}, start_trading_at: {start_trading_at}")
         if current_time < start_trading_at:
-            log_message(market, f"Not sending a buy order because recently risked off at {risk_details['time']} - Would be: BUY {order['size']} @ {order['price']}")
+            log_message_deduplicated(market, "buy_risk_off_check",  f"Not sending a buy order because recently risked off at {risk_details['time']} - Would be: BUY {order['size']} @ {order['price']}")
             return False
 
 
