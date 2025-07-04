@@ -452,13 +452,16 @@ def apply_merge_positions_logic(client, market, row):
             set_position(row['token2'], 'SELL', scaled_amt, 0, 'merge')
 
 
-def base_buy_conditions_met(market, position, buy_amount, row, market_quality_row=None):
+def base_buy_conditions_met(market, position, buy_amount, row, market_quality_row=None, token=None, orders=None, processed_market_data=None, params=None):
     # ------- BUY ORDER LOGIC -------
     # Only buy if:
     # 1. Market quality score is above 50
     # 2. Position is less than 90% of target size
     # 3. Position is less than absolute cap (250)
     # 4. Buy amount is above minimum size
+    # 5. Volatility is not too high
+    # 6. No significant reverse position
+    # 7. Overall ratio is not negative
     
     # Check market quality score first
     if market_quality_row is not None:
@@ -506,6 +509,50 @@ def base_buy_conditions_met(market, position, buy_amount, row, market_quality_ro
                     )
         return False
 
+    # Condition 1: Volatility check
+    if params is not None and row['3_hour'] > params['volatility_threshold']:
+        log_message(market, f'3 Hour Volatility of {row["3_hour"]} is greater than max volatility of {params["volatility_threshold"]}')
+        if token is not None:
+            cancel_orders_with_logging(token, market)
+        return False
+
+    # Condition 2: Reverse position check
+    if token is not None:
+        rev_token = global_state.REVERSE_TOKENS[str(token)]
+        rev_pos = get_position(rev_token)
+        
+        if rev_pos['size'] > row['min_size']:
+            log_message(market, f'Bypassing creation of new buy order because there is a reverse position of size {rev_pos["size"]} - Would be: BUY {buy_amount} @ [price]')
+            if orders is not None and orders['buy']['size'] > CONSTANTS.MIN_MERGE_SIZE:
+                log_message(market, f"Cancelling buy orders because there is a reverse position - Cancelling: BUY {orders['buy']['size']} @ {orders['buy']['price']}")
+                cancel_orders_with_logging(token, market)
+            return False
+
+    # Calculate ratio of buy vs sell liquidity in the market
+    try:
+        overall_ratio = (processed_market_data['bid_sum_within_n_percent']) / (processed_market_data['ask_sum_within_n_percent'])
+    except:
+        overall_ratio = 0
+
+    # Condition 3: Overall ratio check
+    if overall_ratio is not None and overall_ratio < 0:
+        log_message(market, f"Not sending a buy order because overall ratio is {overall_ratio} - Would be: BUY {buy_amount} @ [price]")
+        if token is not None:
+            cancel_orders_with_logging(token, market)
+        return False
+
+    # Check removed 
+    # Get reference price from market data
+    # sheet_value = row['best_bid']
+    #
+    # if yes_no_outcome['name'] == 'token2':
+    #     sheet_value = 1 - row['best_ask']
+    #
+    # sheet_value = round(sheet_value, round_length)
+
+    # Check if price is far from reference
+    # price_change = abs(order['price'] - sheet_value)
+
     return True
 
 def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length, market_quality_row):
@@ -516,29 +563,20 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
     best_bid = processed_market_data['best_bid']
     # Get current orders for this token
     orders = get_order(token)
-    # Calculate ratio of buy vs sell liquidity in the market
-    try:
-        overall_ratio = (processed_market_data['bid_sum_within_n_percent']) / (processed_market_data['ask_sum_within_n_percent'])
-    except:
-        overall_ratio = 0
+
 
     position = round_down(get_position(token)['size'], 2)
 
-    if not base_buy_conditions_met(market, position, buy_amount, row, market_quality_row):
+    if not base_buy_conditions_met(market, position, buy_amount, row, market_quality_row, token, orders, processed_market_data, params):
         return False
 
-    # Get reference price from market data
-    # sheet_value = row['best_bid']
-    #
-    # if yes_no_outcome['name'] == 'token2':
-    #     sheet_value = 1 - row['best_ask']
-    #
-    # sheet_value = round(sheet_value, round_length)
+
+
+
     order['size'] = buy_amount
     order['price'] = bid_price
 
-    # Check if price is far from reference
-    # price_change = abs(order['price'] - sheet_value)
+
 
 
     # ------- RISK-OFF PERIOD CHECK -------
@@ -555,30 +593,6 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
             return False
 
 
-    # Don't buy if volatility is high or price is far from reference
-    if row['3_hour'] > params['volatility_threshold'] :  # or price_change >= 0.05:
-        log_message(market, f'3 Hour Volatility of {row["3_hour"]} is greater than max volatility of '
-                            f'{params["volatility_threshold"]}')
-        cancel_orders_with_logging(order['token'], market)
-        return False
-
-    # Check for reverse position (holding opposite outcome)
-    rev_token = global_state.REVERSE_TOKENS[str(token)]
-    rev_pos = get_position(rev_token)
-
-    # If we have significant opposing position, don't buy more
-    if rev_pos['size'] > row['min_size']:
-        log_message(market, f'Bypassing creation of new buy order because there is a reverse position of size {rev_pos["size"]} - Would be: BUY {order["size"]} @ {order["price"]}')
-        if orders['buy']['size'] > CONSTANTS.MIN_MERGE_SIZE:
-            log_message(market, f"Cancelling buy orders because there is a reverse position - Cancelling: BUY {orders['buy']['size']} @ {orders['buy']['price']}")
-            cancel_orders_with_logging(order['token'], market)
-        return False
-
-    # Check market buy/sell volume ratio
-    if overall_ratio < 0:
-        log_message(market, f"Not sending a buy order because overall ratio is {overall_ratio} - Would be: BUY {order['size']} @ {order['price']}")
-        cancel_orders_with_logging(order['token'], market)
-        return False
 
     # Place new buy order if any of these conditions are met:
     # 1. We can get a better price than current order
