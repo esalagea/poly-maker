@@ -523,7 +523,7 @@ def base_buy_conditions_met(market, position, buy_amount, row, market_quality_ro
     if buy_amount <= 0:
         failed_conditions.append(f"Buy amount is not positive: buy_amount={buy_amount}")
 
-    if buy_amount < row['min_size']:
+    if buy_amount < row['min_size'] and params['buy_under_reward_min_size'] != "YES":
         failed_conditions.append(f"Buy amount below min_size: buy_amount={buy_amount}, min_size={row['min_size']}")
 
     # Condition 1: Volatility check
@@ -535,8 +535,8 @@ def base_buy_conditions_met(market, position, buy_amount, row, market_quality_ro
         rev_token = global_state.REVERSE_TOKENS[str(token)]
         rev_pos = get_position(rev_token)
         
-        if rev_pos['size'] > row['min_size']:
-            failed_conditions.append(f"Reverse position too large: size={rev_pos['size']}, min_size={row['min_size']}")
+        if rev_pos['size'] > row['trade_size']:
+            failed_conditions.append(f"Reverse position too large: size={rev_pos['size']}, trade_size={row['trade_size']}")
 
     # Condition 3: Overall ratio check
     if processed_market_data is not None:
