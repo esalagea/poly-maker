@@ -403,12 +403,6 @@ async def perform_trade(market):
                     'market': market
                 }
 
-                # Log market conditions for this outcome (only if changed)
-                log_market_conditions_if_changed(
-                    market, row['question'], yes_no_outcome, orders, position, avgPrice,
-                    best_bid, best_ask, bid_price, ask_price, mid_price,
-                    row['trade_size'], buy_amount, sell_amount
-                )
 
                 # ------- SELL ORDER LOGIC -------
                 if sell_amount > 0 and check_and_execute_stop_loss(market, row, yes_no_outcome, order, sell_amount, avgPrice, ask_price, round_length, params, client):
@@ -459,7 +453,7 @@ def log_trading_state_summary(market, row, yes_no_outcomes, params, market_quali
         summary_lines.append("==================== TRADING STATE ====================")
         summary_lines.append(f"Market: {row['question']}")
         summary_lines.append("")
-        summary_lines.append("TOKEN    POSITION   AVG_PRICE   ORDERS              MARKET")
+        summary_lines.append("TOKEN    POSITION   AVG_PRICE   ORDERS         MARKET           PREPARED")
         
         # Process each outcome
         for yes_no_outcome in yes_no_outcomes:
@@ -480,19 +474,42 @@ def log_trading_state_summary(market, row, yes_no_outcomes, params, market_quali
                 orders_list.append(f"SELL {orders['sell']['size']:.0f}@{orders['sell']['price']:.2f}")
             orders_str = ", ".join(orders_list) if orders_list else "None"
             
-            # Get market data for this outcome
+            # Get market data
             try:
-                market_data = get_best_bid_ask_deets(market, yes_no_outcome['name'], 50, 0.1)
+                target_size = row['trade_size'] - position
+                market_data = get_best_bid_ask_deets(market, yes_no_outcome['name'], target_size, 0.1)
                 best_bid = market_data['best_bid']
                 best_ask = market_data['best_ask']
-                mid_price = (best_bid + best_ask) / 2
-                market_str = f"Bid:{best_bid:.2f} Ask:{best_ask:.2f} Mid:{mid_price:.2f}"
-            except:
-                market_str = "Bid:N/A Ask:N/A Mid:N/A"
+                top_bid = market_data['top_bid'] 
+                top_ask = market_data['top_ask']
+                mid_price = (top_bid + top_ask) / 2
+                market_str = f"Bid:{best_bid:.2f} Ask:{best_ask:.2f}"
+                
+                # Calculate optimal prices for prepared orders
+                optimal_bid, optimal_ask = get_order_prices(
+                    best_bid, market_data['best_bid_size'], top_bid, best_ask,
+                    market_data['best_ask_size'], top_ask, avg_price, row
+                )
+                round_length = len(str(row['tick_size']).split(".")[1])
+                optimal_bid = round(optimal_bid, round_length)
+                optimal_ask = round(optimal_ask, round_length)
+                
+                # Calculate what orders would be prepared
+                buy_amount, sell_amount = get_buy_sell_amount(position, optimal_bid, row)
+                prepared_list = []
+                if buy_amount > 0:
+                    prepared_list.append(f"BUY {buy_amount:.0f}@{optimal_bid:.2f}")
+                if sell_amount > 0:
+                    prepared_list.append(f"SELL {sell_amount:.0f}@{optimal_ask:.2f}")
+                prepared_str = ", ".join(prepared_list) if prepared_list else "None"
+                
+            except Exception:
+                market_str = "Bid:N/A Ask:N/A"
+                prepared_str = "N/A"
             
-            # Format the line (adjust spacing as needed)
+            # Format the line with enhanced columns
             outcome_name = yes_no_outcome['answer'][:8]  # Truncate long names
-            summary_lines.append(f"{outcome_name:<8} {position:<10.1f} {avg_price_str:<11} {orders_str:<19} {market_str}")
+            summary_lines.append(f"{outcome_name:<8} {position:<10.1f} {avg_price_str:<11} {orders_str:<14} {market_str:<16} {prepared_str}")
         
         # Add footer with key metrics
         summary_lines.append("")
