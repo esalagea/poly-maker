@@ -243,8 +243,6 @@ async def perform_trade(market):
             # Determine decimal precision from tick size
             round_length = len(str(row['tick_size']).split(".")[1])
 
-
-
             
             # Create a list with both outcomes for the market
             yes_no_outcomes = [
@@ -321,11 +319,15 @@ async def perform_trade(market):
                 if sell_amount > 0 and check_and_execute_stop_loss(market, row, yes_no_outcome, order, sell_amount, avgPrice, ask_price, round_length, params, client):
                     continue
 
-                send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length, market_quality_df)
-                        
-                # ------- TAKE PROFIT / SELL ORDER MANAGEMENT -------            
+                # ------- TAKE PROFIT / SELL ORDER MANAGEMENT -------
                 if sell_amount > 0:
-                    handle_take_profit_orders(market, token, order, sell_amount, avgPrice, ask_price, orders, position, params, round_length, yes_no_outcome, best_bid, best_ask)
+                    if handle_take_profit_orders(market, token, order, sell_amount, avgPrice, ask_price, orders, position, params, round_length, yes_no_outcome, best_bid, best_ask):
+                        continue
+
+                if send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length, market_quality_df, market_making):
+                    continue
+                        
+
 
         except Exception as ex:
             log_message(market, f"Error performing trade for {market}: {str(ex)}\n{traceback.format_exc()}")
@@ -466,10 +468,13 @@ def handle_take_profit_orders(market, token, order, sell_amount, avgPrice, ask_p
     # 1. Current order price is significantly different from target
     if diff > 2:
         send_sell_order(order, orders, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because price deviant - NEW: SELL {order['size']} @ {order['price']}, OLD: SELL {orders['sell']['size']} @ {order_price} (diff: {diff}%)")
+        return True
     # 2. Current order size is too small for our position
     elif orders['sell']['size'] < position * 0.97:
         send_sell_order(order, orders, f"TAKE PROFIT ORDER:: Sending Sell Order for {token} because not enough sell size - NEW: SELL {order['size']} @ {order['price']}, OLD: SELL {orders['sell']['size']} @ {orders['sell']['price']} (Position: {position})")
+        return True
 
+    return False
 
 def apply_merge_positions_logic(client, market, row):
     # ------- POSITION MERGING LOGIC -------
@@ -561,7 +566,11 @@ def base_buy_conditions_met(market, position, buy_amount, row, market_quality_ro
 
     return failed_conditions
 
-def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length, market_quality_row):
+def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome, order, buy_amount, bid_price, round_length, market_quality_row, market_making):
+    if market_making == 'EXIT':
+        log_message_deduplicated(market, "market_making_exit", 'Market making EXIT mode. Will not send buy orders.')
+        return
+
     risk_file_name = risk_management_filename(market)
     client = global_state.client
     params = global_state.params[row['param_type']]
