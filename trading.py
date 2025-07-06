@@ -343,6 +343,8 @@ async def perform_trade(market):
                 {'name': 'token2', 'token': row['token2'], 'answer': row['answer2']}
             ]
 
+            # Log structured trading state summary
+            log_trading_state_summary(market, row, yes_no_outcomes, params, market_quality_df)
 
             apply_merge_positions_logic(client, market, row)
 
@@ -429,6 +431,82 @@ async def perform_trade(market):
         # Clean up memory and introduce a small delay
         gc.collect()
         await asyncio.sleep(2)
+
+
+def log_trading_state_summary(market, row, yes_no_outcomes, params, market_quality_df):
+    """
+    Log a structured summary of the current trading state for this market.
+    
+    Args:
+        market: Market identifier
+        row: Market data row
+        yes_no_outcomes: List of outcome details
+        params: Trading parameters
+        market_quality_df: Market quality analysis data
+    """
+    try:
+        # Extract market quality score
+        quality_score = "N/A"
+        if market_quality_df is not None and not market_quality_df.empty:
+            quality_score = market_quality_df.get('score', pd.Series([None])).iloc[0]
+            if pd.isna(quality_score):
+                quality_score = "N/A"
+            else:
+                quality_score = f"{quality_score:.1f}"
+        
+        # Build header
+        summary_lines = []
+        summary_lines.append("==================== TRADING STATE ====================")
+        summary_lines.append(f"Market: {row['question']}")
+        summary_lines.append("")
+        summary_lines.append("TOKEN    POSITION   AVG_PRICE   ORDERS              MARKET")
+        
+        # Process each outcome
+        for yes_no_outcome in yes_no_outcomes:
+            token = int(yes_no_outcome['token'])
+            
+            # Get position data
+            pos = get_position(token)
+            position = round_down(pos['size'], 2)
+            avg_price = pos['avgPrice']
+            avg_price_str = f"${avg_price:.3f}" if avg_price > 0 else "$0.000"
+            
+            # Get current orders
+            orders = get_order(token)
+            orders_list = []
+            if orders.get('buy', {}).get('size', 0) > 0:
+                orders_list.append(f"BUY {orders['buy']['size']:.0f}@{orders['buy']['price']:.2f}")
+            if orders.get('sell', {}).get('size', 0) > 0:
+                orders_list.append(f"SELL {orders['sell']['size']:.0f}@{orders['sell']['price']:.2f}")
+            orders_str = ", ".join(orders_list) if orders_list else "None"
+            
+            # Get market data for this outcome
+            try:
+                market_data = get_best_bid_ask_deets(market, yes_no_outcome['name'], 50, 0.1)
+                best_bid = market_data['best_bid']
+                best_ask = market_data['best_ask']
+                mid_price = (best_bid + best_ask) / 2
+                market_str = f"Bid:{best_bid:.2f} Ask:{best_ask:.2f} Mid:{mid_price:.2f}"
+            except:
+                market_str = "Bid:N/A Ask:N/A Mid:N/A"
+            
+            # Format the line (adjust spacing as needed)
+            outcome_name = yes_no_outcome['answer'][:8]  # Truncate long names
+            summary_lines.append(f"{outcome_name:<8} {position:<10.1f} {avg_price_str:<11} {orders_str:<19} {market_str}")
+        
+        # Add footer with key metrics
+        summary_lines.append("")
+        summary_lines.append(f"Target: {row['trade_size']} per side | Quality: {quality_score} | Volatility: {row['3_hour']:.1f}%")
+        summary_lines.append("=======================================================")
+        
+        # Join all lines into single message
+        summary_message = "\n".join(summary_lines)
+        
+        # Log with deduplication
+        log_message_deduplicated(market, "trading_state_summary", summary_message)
+        
+    except Exception as e:
+        log_message(market, f"Error creating trading state summary: {str(e)}")
 
 
 def check_and_execute_stop_loss(market, row, yes_no_outcome, order, sell_amount, avgPrice, ask_price, round_length, params, client):
