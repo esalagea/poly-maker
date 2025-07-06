@@ -48,8 +48,8 @@ def log_market_conditions_if_changed(market, question, yes_no_outcome, orders, p
     
     prepared_str = ", ".join(prepared_list) if prepared_list else "None"
 
-    # Create combined message with header
-    combined_message = (f"\n\n{pd.Timestamp.utcnow().tz_localize(None)}: {question}\n"
+    # Create combined message without embedded timestamp (timestamp added by _write_log_message)
+    combined_message = (f"\n\n{question}\n"
                        f"For {yes_no_outcome['answer']}. Orders: {orders_str} Position: {position}, "
                        f"avgPrice: {avgPrice}, Best Bid: {best_bid}, Best Ask: {best_ask}, "
                        f"Our optimal bid Price: {bid_price}, Our optimal ask Price: {ask_price}, Mid Price: {mid_price}\n"
@@ -88,6 +88,11 @@ def log_message_deduplicated(market_name, message_id, *messages):
         if last_logged_messages[message_key] == message:
             message_changed = False
             skipped_log_counts[message_key] += 1
+        # Debug: uncomment to see why messages aren't being deduplicated
+        # else:
+        #     print(f"DEBUG: Message changed for key {message_key}")
+        #     print(f"OLD: {repr(last_logged_messages[message_key])}")
+        #     print(f"NEW: {repr(message)}")
     
     # If message hasn't changed, check skip counter
     if not message_changed:
@@ -153,6 +158,8 @@ def _write_log_message(market_name, message):
 
     # Write to log file
     log_file = f'log/{safe_filename}.log'
-    timestamp = pd.Timestamp.utcnow().tz_localize(None)
+    #timestamp = pd.Timestamp.utcnow().tz_localize(None)
+    # change timestamp to local time
+    timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
     with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"{timestamp}: {message}\n")

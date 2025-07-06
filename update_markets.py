@@ -160,8 +160,89 @@ def save_market_quality_data(market_quality_df):
         last_spreadsheet_update = current_time
         print(f"Market quality data saved for question: {question}")
         
+        # Also update the Selected Markets quality field
+        _update_selected_markets_quality(market_quality_df)
+        
     except Exception as e:
         print(f"Error saving market quality data: {str(e)}")
+        traceback.print_exc()
+
+def _update_selected_markets_quality(market_quality_df):
+    """
+    Update the quality field in the 'Selected Markets' worksheet for the corresponding question.
+    
+    Args:
+        market_quality_df (pd.DataFrame): DataFrame containing market quality analysis results
+    """
+    global last_spreadsheet_update
+    
+    try:
+        # Check global timing constraint - must be at least 1 minute since last spreadsheet update
+        # current_time = pd.Timestamp.now()
+        # if last_spreadsheet_update is not None:
+        #     time_since_last_global_update = current_time - last_spreadsheet_update
+        #     if time_since_last_global_update.total_seconds() < 60:  # 60 seconds = 1 minute
+        #         # print(f"Skipping selected markets quality update - only {time_since_last_global_update.total_seconds():.0f} seconds since last spreadsheet update")
+        #         return
+        
+        # Extract the question and quality score from market_quality_df
+        question = market_quality_df['question'].iloc[0]
+        quality_score = market_quality_df.get('score', pd.Series([None])).iloc[0]
+        
+        # Handle invalid quality scores
+        if pd.isna(quality_score) or quality_score in [float('inf'), float('-inf')]:
+            quality_score = ''
+        
+        # Get the spreadsheet instance
+        spreadsheet = get_spreadsheet()
+        
+        # Get the 'Selected Markets' worksheet
+        try:
+            wk_selected = spreadsheet.worksheet("Selected Markets")
+        except:
+            print(f"Selected Markets worksheet not found, skipping quality update for: {question}")
+            return
+        
+        # Get existing data from the worksheet
+        try:
+            selected_df = get_as_dataframe(wk_selected)
+            # Remove empty rows
+            selected_df = selected_df.dropna(how='all')
+        except:
+            print(f"Error reading Selected Markets worksheet, skipping quality update for: {question}")
+            return
+        
+        # Check if question column exists
+        if 'question' not in selected_df.columns:
+            print(f"Question column not found in Selected Markets worksheet")
+            return
+        
+        # Find matching question row
+        matching_rows = selected_df[selected_df['question'] == question]
+        
+        if matching_rows.empty:
+            # Question not found in Selected Markets, skip silently
+            return
+        
+        # Update quality field for the first matching row
+        row_index = matching_rows.index[0]
+        
+        # Ensure quality column exists
+        if 'quality' not in selected_df.columns:
+            selected_df['quality'] = ''
+        
+        # Update the quality value
+        selected_df.loc[row_index, 'quality'] = quality_score
+        
+        # Clean the DataFrame before updating sheet
+        selected_df = selected_df.replace([float('inf'), float('-inf')], None)
+        selected_df = selected_df.fillna('')
+        
+        # Update the worksheet
+        update_sheet(selected_df, wk_selected)
+        
+    except Exception as e:
+        print(f"Error updating Selected Markets quality: {str(e)}")
         traceback.print_exc()
 
 def fetch_and_process_data(ONLY_SELECTED_MARKETS):

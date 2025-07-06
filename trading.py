@@ -509,7 +509,7 @@ def base_buy_conditions_met(market, position, buy_amount, row, market_quality_ro
     if market_quality_row is not None:
         market_quality_score = market_quality_row.get('score', None) if isinstance(market_quality_row, dict) else market_quality_row.iloc[0].get('score', None) if hasattr(market_quality_row, 'iloc') else None
         
-        if market_quality_score is None or market_quality_score <= 50:
+        if market_quality_score is None or market_quality_score <= params['min_market_quality']:
             failed_conditions.append(f"Market quality score too low: score={market_quality_score}")
     else:
         failed_conditions.append("Market quality data not available")
@@ -579,7 +579,7 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
         # Log all failed conditions in a single message with duplicate detection
         conditions_text = "; ".join(failed_conditions)
         would_be_order = f"BUY {order['size']} @ {order['price']}"
-        log_message_deduplicated(market, "buy_failed_conditions", f"Buy order conditions not met - Would be: {would_be_order}. Reasons: {conditions_text}")
+        log_message_deduplicated(market, f"buy_failed_conditions_{yes_no_outcome['answer']}", f"Buy order conditions for {yes_no_outcome['answer']} not met - Would be: {would_be_order}. Reasons: {conditions_text}")
         return False
 
 
@@ -592,9 +592,14 @@ def send_buy_order_if_needed(market, row, processed_market_data, yes_no_outcome,
         start_trading_at = pd.to_datetime(risk_details['sleep_till'])
         current_time = pd.Timestamp.utcnow().tz_localize(None)
 
-        log_message(market, f"Risk details: {risk_details}, current_time: {current_time}, start_trading_at: {start_trading_at}")
         if current_time < start_trading_at:
-            log_message_deduplicated(market, "buy_risk_off_check",  f"Not sending a buy order because recently risked off at {risk_details['time']} - Would be: BUY {order['size']} @ {order['price']}")
+            # Log with deduplication - only stable parts of the message
+            would_be_order = f"BUY {order['size']} @ {order['price']}"
+            log_message_deduplicated(
+                market, 
+                f"buy_risk_off_check_{yes_no_outcome['answer']}", 
+                f"Not sending a buy order for {yes_no_outcome['answer']} because recently risked off - Would be: {would_be_order}. Sleep until {risk_details['sleep_till']}"
+            )
             return False
 
 
