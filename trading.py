@@ -25,6 +25,98 @@ if not os.path.exists('positions/'):
 if not os.path.exists('log_old/'):
     os.makedirs('log_old/')
 
+def get_conflicting_order_sides(new_order_side, new_price, existing_orders):
+    """
+    Determine which order sides should be canceled to avoid conflicts.
+    
+    Args:
+        new_order_side (str): 'BUY' or 'SELL'
+        new_price (float): Price of the new order
+        existing_orders (dict): Current orders {'buy': {...}, 'sell': {...}}
+        
+    Returns:
+        list: List of sides to cancel ['BUY'] and/or ['SELL']
+    """
+    sides_to_cancel = []
+    
+    # Always cancel same-side orders (different price/size strategy)
+    if new_order_side == 'BUY':
+        if existing_orders.get('buy', {}).get('size', 0) > 0:
+            sides_to_cancel.append('BUY')
+            
+        # Economic conflict check: Don't allow buy_price >= sell_price
+        existing_sell_price = existing_orders.get('sell', {}).get('price', 0)
+        if existing_sell_price > 0 and new_price >= existing_sell_price:
+            sides_to_cancel.append('SELL')
+            
+    elif new_order_side == 'SELL':
+        if existing_orders.get('sell', {}).get('size', 0) > 0:
+            sides_to_cancel.append('SELL')
+            
+        # Economic conflict check: Don't allow sell_price <= buy_price  
+        existing_buy_price = existing_orders.get('buy', {}).get('price', 0)
+        if existing_buy_price > 0 and new_price <= existing_buy_price:
+            sides_to_cancel.append('BUY')
+    
+    return sides_to_cancel
+
+
+def cancel_specific_order_sides(token, market, sides_to_cancel):
+    """
+    Cancel only specific order sides for a token.
+    
+    Args:
+        token: The token/asset_id to cancel orders for
+        market: Market identifier for API call and logging context
+        sides_to_cancel: List of sides to cancel ['BUY'] and/or ['SELL']
+    """
+    if not sides_to_cancel:
+        return
+        
+    client = global_state.client
+    
+    # Get existing orders before canceling
+    try:
+        if market:
+            # Get all orders for the market, then filter by token
+            all_market_orders = client.get_market_orders(market)
+            existing_orders = all_market_orders[all_market_orders['asset_id'] == str(token)]
+        else:
+            # Fallback: get all orders and filter by token
+            all_orders = client.get_all_orders()
+            existing_orders = all_orders[all_orders['asset_id'] == str(token)]
+        
+        # Filter to only the sides we want to cancel
+        orders_to_cancel = existing_orders[existing_orders['side'].isin(sides_to_cancel)]
+        
+        if len(orders_to_cancel) > 0:
+            # Log details about orders being canceled
+            orders_info = []
+            for idx, order in orders_to_cancel.iterrows():
+                orders_info.append(f"{order['side']} {order['original_size']} @ {order['price']}")
+            
+            orders_str = ", ".join(orders_info)
+            sides_str = ", ".join(sides_to_cancel)
+            
+            if market:
+                log_message(market, f"Canceling {len(orders_to_cancel)} {sides_str} orders for token {token}: {orders_str}")
+            else:
+                log_message("TRADING", f"Canceling {len(orders_to_cancel)} {sides_str} orders for token {token}: {orders_str}")
+        
+        # Cancel each order individually (since we can't cancel by side)
+        for idx, order in orders_to_cancel.iterrows():
+            client.cancel_order(order['id'])
+            
+    except Exception as e:
+        if market:
+            log_message(market, f"Error checking orders before selective cancel for token {token}: {str(e)}")
+        else:
+            log_message("TRADING", f"Error checking orders before selective cancel for token {token}: {str(e)}")
+        
+        # Fallback: cancel all if selective cancellation fails
+        client.cancel_all_asset(token)
+
+
 def cancel_orders_with_logging(token, market=None):
     """
     Cancel all orders for a given token with proper logging.
@@ -114,10 +206,10 @@ def send_buy_order(order, existing_orders=None, log_message_text=None):
         # Skip order creation - do not log anything
         return False
 
-
-    # Cancel existing orders for this token to avoid conflicts
-    if current_orders.get('buy', {}).get('size', 0) > 0 or current_orders.get('sell', {}).get('size', 0) > 0:
-        cancel_orders_with_logging(order['token'], market)
+    # Smart conflict checking - only cancel conflicting orders
+    sides_to_cancel = get_conflicting_order_sides('BUY', new_price, current_orders)
+    if sides_to_cancel:
+        cancel_specific_order_sides(order['token'], market, sides_to_cancel)
 
     # Log the provided message or default message
     if log_message_text:
@@ -176,9 +268,10 @@ def send_sell_order(order, existing_orders=None, log_message_text=None):
         # Skip order creation - do not log anything
         return False
     
-    # Cancel existing orders for this token to avoid conflicts
-    if current_orders.get('buy', {}).get('size', 0) > 0 or current_orders.get('sell', {}).get('size', 0) > 0:
-        cancel_orders_with_logging(order['token'], market)
+    # Smart conflict checking - only cancel conflicting orders
+    sides_to_cancel = get_conflicting_order_sides('SELL', new_price, current_orders)
+    if sides_to_cancel:
+        cancel_specific_order_sides(order['token'], market, sides_to_cancel)
 
     # Log the provided message or default message
     if log_message_text:
