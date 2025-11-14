@@ -310,17 +310,19 @@ class PolymarketClient:
 
         # Use list instead of shell command for security
         node_command = [node_path, script_path, amount_to_merge_str, condition_id, is_neg_risk]
-        print(' '.join(node_command))
+        print('Running command:', ' '.join(node_command))
 
         # Run the command and capture the output
-        result = subprocess.run(node_command, shell=True, capture_output=True, text=True)
-        
+        # NOTE: shell=False (default) when using list - this prevents hanging
+        result = subprocess.run(node_command, capture_output=True, text=True, timeout=60)
+
         # Check if there was an error
         if result.returncode != 0:
             print("Error:", result.stderr)
             raise Exception(f"Error in merging positions: {result.stderr}")
         
         print("Done merging")
+        print("Output:", result.stdout)
 
         # Return the transaction hash or output
         return result.stdout
