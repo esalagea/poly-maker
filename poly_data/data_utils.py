@@ -43,12 +43,12 @@ def _update_position_size_conditionally(asset, position, api_size):
                 old_size = 0
 
             if asset in  global_state.last_trade_update:
-                if time.time() - global_state.last_trade_update[asset] < 5:
+                if time.time() - global_state.last_trade_update[asset] < 30:  # Increased from 5 to 30 seconds
                     market = get_market_from_token(asset)
                     if market:
-                        log_message(market, f"Skipping update for {asset} because last trade update was less than 5 seconds ago")
+                        log_message(market, f"Skipping update for {asset} because last trade update was less than 30 seconds ago")
                     else:
-                        log_message("UNKNOWN_MARKET", f"Skipping update for {asset} because last trade update was less than 5 seconds ago")
+                        log_message("UNKNOWN_MARKET", f"Skipping update for {asset} because last trade update was less than 30 seconds ago")
                     continue
 
             if old_size != api_size:

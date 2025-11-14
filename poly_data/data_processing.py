@@ -166,7 +166,10 @@ def process_user_data(rows):
                     log_message(market, "Performing timestamps is ", global_state.performing_timestamps)
                     asyncio.create_task(perform_trade(market))
                 elif row['status'] == 'MINED':
-                    remove_from_performing(col, row['id'])
+                    # Don't remove from performing yet - wait for CONFIRMED
+                    # This prevents API updates from overwriting the position
+                    log_message(market, f"Trade {row['id']} mined, waiting for confirmation")
+                    pass
 
             elif row['event_type'] == 'order':
                 # Format order event in a pretty table format
