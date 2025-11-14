@@ -277,10 +277,10 @@ def fetch_and_process_data(ONLY_SELECTED_MARKETS):
     new_df['volatility_sum'] =  new_df['24_hour'] + new_df['7_day'] + new_df['14_day']
     
     new_df = new_df.sort_values('volatility_sum', ascending=True)
-    new_df['reward/volatility'] = ((new_df['gm_reward_per_100'] / new_df['volatility_sum']).round(2)).astype(str)
+    new_df['volatilty/reward'] = ((new_df['gm_reward_per_100'] / new_df['volatility_sum']).round(2)).astype(str)
 
-    new_df = new_df[['question', 'answer1', 'answer2', 'spread', 'rewards_daily_rate', 'gm_reward_per_100', 'sm_reward_per_100', 'bid_reward_per_100', 'ask_reward_per_100',  'volatility_sum', 'reward/volatility', 'min_size', '1_hour', '3_hour', '6_hour', '12_hour', '24_hour', '7_day', '30_day',
-                     'best_bid', 'best_ask', 'volatility_price', 'max_spread', 'tick_size',
+    new_df = new_df[['question', 'answer1', 'answer2', 'spread', 'rewards_daily_rate', 'gm_reward_per_100', 'sm_reward_per_100', 'bid_reward_per_100', 'ask_reward_per_100',  'volatility_sum', 'volatilty/reward', 'min_size', '1_hour', '3_hour', '6_hour', '12_hour', '24_hour', '7_day', '30_day',  
+                     'best_bid', 'best_ask', 'volatility_price', 'max_spread', 'tick_size',  
                      'neg_risk',  'market_slug', 'token1', 'token2', 'condition_id']]
 
     
