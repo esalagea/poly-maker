@@ -15,14 +15,18 @@
 
 const { ethers } = require('ethers');
 const { resolve } = require('path');
+const { existsSync } = require('fs');
 const { signAndExecuteSafeTransaction } = require('./safe-helpers');
 const { safeAbi } = require('./safeAbi');
 
 // Load environment variables
-require('dotenv').config()
+const localEnvPath = resolve(__dirname, '.env');
+const parentEnvPath = resolve(__dirname, '../.env');
+const envPath = existsSync(localEnvPath) ? localEnvPath : parentEnvPath;
+require('dotenv').config({ path: envPath })
 
 // Connect to Polygon network
-const provider = new ethers.providers.JsonRpcProvider("https://polygon.llamarpc.com");
+const provider = new ethers.providers.JsonRpcProvider("https://polygon-rpc.com");
 const privateKey = process.env.PK;
 const wallet = new ethers.Wallet(privateKey, provider);
 

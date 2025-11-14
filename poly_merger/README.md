@@ -20,10 +20,11 @@ node merge.js [amount_to_merge] [condition_id] [is_neg_risk_market]
 
 Example:
 ```
-node merge.js 1000000 1234567 true
+node merge.js 1000000 0xasdasda true
 ```
 
-This would merge 1 USDC worth of opposing positions in market 1234567, which is a negative risk market.
+This would merge 1 USDC worth of opposing positions in market 0xasdasda, which is a negative risk market. 0xasdasda should be condition_id
+
 
 ## Prerequisites
 
