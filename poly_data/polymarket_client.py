@@ -260,6 +260,18 @@ class PolymarketClient:
         return orders_df
     
 
+    def cancel_order(self, order_id):
+        """
+        Cancel a single order by ID.
+
+        Args:
+            order_id (str): The order ID to cancel
+
+        Returns:
+            Response from the API
+        """
+        return self.client.cancel_orders([order_id])
+
     def cancel_all_asset(self, asset_id):
         """
         Cancel all orders for a specific asset token.
