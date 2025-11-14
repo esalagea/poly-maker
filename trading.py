@@ -366,6 +366,9 @@ async def perform_trade(market):
                 target_size = row['trade_size'] - position
                 # Get market depth and price information
                 processed_market_data = get_best_bid_ask_deets(market, yes_no_outcome['name'], target_size, 0.1)
+                if processed_market_data is None:
+                    log_message(market,"Not enough market depth. Will not perform trades")
+                    continue
 
                 # Extract all order book details
                 best_bid = round(processed_market_data['best_bid'], round_length)
@@ -478,6 +481,10 @@ def log_trading_state_summary(market, row, yes_no_outcomes, params, market_quali
             try:
                 target_size = row['trade_size'] - position
                 market_data = get_best_bid_ask_deets(market, yes_no_outcome['name'], target_size, 0.1)
+                if market_data is None:
+                    log_message(market, "Not enough market depth on leg " + yes_no_outcome)
+                    continue
+
                 best_bid = market_data['best_bid']
                 best_ask = market_data['best_ask']
                 top_bid = market_data['top_bid'] 

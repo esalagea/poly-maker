@@ -32,6 +32,10 @@ def get_best_bid_ask_deets(market, name, size, deviation_threshold=0.05):
     best_ask, best_ask_size, second_best_ask, second_best_ask_size, top_ask = find_best_price_with_size(
         global_state.all_data[market]['asks'], size, reverse=False)
 
+    if None in (best_bid, best_bid_size, top_bid,
+                best_ask, best_ask_size, top_ask):
+        return None
+
     mid_price = (best_bid + best_ask) / 2
 
     bid_sum_within_n_percent = sum(size for price, size in global_state.all_data[market]['bids'].items() if
