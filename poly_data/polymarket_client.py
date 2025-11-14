@@ -302,9 +302,15 @@ class PolymarketClient:
         """
         amount_to_merge_str = str(amount_to_merge)
 
-        # Prepare the command to run the JavaScript script
-        node_command = f'node poly_merger/merge.js {amount_to_merge_str} {condition_id} {"true" if is_neg_risk_market else "false"}'
-        print(node_command)
+        # Get node path from environment variable, with fallback
+        node_path = os.environ.get('NODE_PATH', 'node')
+
+        script_path = 'poly_merger/merge.js'
+        is_neg_risk = "true" if is_neg_risk_market else "false"
+
+        # Use list instead of shell command for security
+        node_command = [node_path, script_path, amount_to_merge_str, condition_id, is_neg_risk]
+        print(' '.join(node_command))
 
         # Run the command and capture the output
         result = subprocess.run(node_command, shell=True, capture_output=True, text=True)
