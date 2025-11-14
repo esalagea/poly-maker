@@ -1,3 +1,4 @@
+
 import json
 from sortedcontainers import SortedDict
 import poly_data.global_state as global_state
@@ -5,13 +6,14 @@ import poly_data.CONSTANTS as CONSTANTS
 
 from poly_data.log_utils import log_message
 from trading import perform_trade
-import time 
+import time
 import asyncio
 from poly_data.data_utils import set_position, set_order, update_positions
 import json
 
 def process_book_data(asset, json_data):
     global_state.all_data[asset] = {
+        'asset_id': json_data['asset_id'],  # token_id for the Yes token
         'bids': SortedDict(),
         'asks': SortedDict()
     }
@@ -20,6 +22,8 @@ def process_book_data(asset, json_data):
     global_state.all_data[asset]['asks'].update({float(entry['price']): float(entry['size']) for entry in json_data['asks']})
 
 def process_price_change(asset, side, price_level, new_size):
+    if asset_id != global_state.all_data[asset]['asset_id']:
+        return  # skip updates for the No token to prevent duplicated updates
     if side == 'bids':
         book = global_state.all_data[asset]['bids']
     else:
@@ -32,9 +36,6 @@ def process_price_change(asset, side, price_level, new_size):
         book[price_level] = new_size
 
 def process_data(json_datas, trade=True):
-    # Convert single dict to list if needed
-    if isinstance(json_datas, dict):
-        json_datas = [json_datas]
 
     for json_data in json_datas:
         event_type = json_data['event_type']
@@ -47,7 +48,7 @@ def process_data(json_datas, trade=True):
                 asyncio.create_task(perform_trade(asset))
                 
         elif event_type == 'price_change':
-            for data in json_data['changes']:
+            for data in json_data['price_changes']:
                 side = 'bids' if data['side'] == 'BUY' else 'asks'
                 price_level = float(data['price'])
                 new_size = float(data['size'])
