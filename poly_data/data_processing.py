@@ -85,6 +85,8 @@ def remove_from_performing(col, id):
         global_state.performing_timestamps[col].pop(id, None)
 
 def process_user_data(rows):
+    if isinstance(rows, dict):
+        rows = [rows]
 
     for row in rows:
         market = row['market']
