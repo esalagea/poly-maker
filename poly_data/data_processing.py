@@ -123,7 +123,22 @@ def process_user_data(rows):
                     price = float(row['price'])
                     log_message(market,"User is taker")
 
-                log_message(market, "TRADE EVENT FOR: ", row['market'], "ID: ", row['id'], "STATUS: ", row['status'], " SIDE: ", row['side'], "  MAKER OUTCOME: ", maker_outcome, " TAKER OUTCOME: ", taker_outcome, " PROCESSED SIDE: ", side, " SIZE: ", size, "PRICE: ", row["price"])
+                # Format trade event in a pretty table format
+                log_message(market,
+                    f"\n{'='*80}\n"
+                    f"TRADE EVENT: {row['market'][:50]}\n"
+                    f"{'-'*80}\n"
+                    f"{'ID':<20} {row['id']}\n"
+                    f"{'STATUS':<20} {row['status']}\n"
+                    f"{'SIDE (raw)':<20} {row['side']}\n"
+                    f"{'SIDE (processed)':<20} {side.upper()}\n"
+                    f"{'MAKER OUTCOME':<20} {maker_outcome if maker_outcome else 'N/A'}\n"
+                    f"{'TAKER OUTCOME':<20} {taker_outcome}\n"
+                    f"{'SIZE':<20} {size:.2f}\n"
+                    f"{'PRICE':<20} ${float(row['price']):.3f}\n"
+                    f"{'TOKEN':<20} {token[:16]}...\n"
+                    f"{'='*80}"
+                )
 
 
                 if row['status'] == 'CONFIRMED' or row['status'] == 'FAILED' :
@@ -154,9 +169,24 @@ def process_user_data(rows):
                     remove_from_performing(col, row['id'])
 
             elif row['event_type'] == 'order':
-                log_message(market, "ORDER EVENT FOR: ", row['market'], " STATUS: ",  row['status'], " TYPE: ", row['type'], " SIDE: ", side, "  ORIGINAL SIZE: ", row['original_size'], " SIZE MATCHED: ", row['size_matched'])
-                
-                set_order(token, side, float(row['original_size']) - float(row['size_matched']), row['price'])
+                # Format order event in a pretty table format
+                remaining_size = float(row['original_size']) - float(row['size_matched'])
+                log_message(market,
+                    f"\n{'='*80}\n"
+                    f"ORDER EVENT: {row['market'][:50]}\n"
+                    f"{'-'*80}\n"
+                    f"{'STATUS':<20} {row['status']}\n"
+                    f"{'TYPE':<20} {row['type']}\n"
+                    f"{'SIDE':<20} {side.upper()}\n"
+                    f"{'ORIGINAL SIZE':<20} {float(row['original_size']):.2f}\n"
+                    f"{'SIZE MATCHED':<20} {float(row['size_matched']):.2f}\n"
+                    f"{'REMAINING SIZE':<20} {remaining_size:.2f}\n"
+                    f"{'PRICE':<20} ${float(row['price']):.3f}\n"
+                    f"{'TOKEN':<20} {token[:16]}...\n"
+                    f"{'='*80}"
+                )
+
+                set_order(token, side, remaining_size, row['price'])
                 asyncio.create_task(perform_trade(market))
 
         else:
