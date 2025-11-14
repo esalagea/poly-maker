@@ -32,6 +32,9 @@ def process_price_change(asset, side, price_level, new_size):
         book[price_level] = new_size
 
 def process_data(json_datas, trade=True):
+    # Convert single dict to list if needed
+    if isinstance(json_datas, dict):
+        json_datas = [json_datas]
 
     for json_data in json_datas:
         event_type = json_data['event_type']
