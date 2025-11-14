@@ -44,8 +44,32 @@ def get_best_bid_ask_deets(market, name, size, deviation_threshold=0.05):
                                    mid_price * (1 - deviation_threshold) <= price <= best_ask)
 
     if name == 'token2':
-        best_bid, second_best_bid, top_bid, best_ask, second_best_ask, top_ask = 1 - best_ask, 1 - second_best_ask, 1 - top_ask, 1 - best_bid, 1 - second_best_bid, 1 - top_bid
-        best_bid_size, second_best_bid_size, best_ask_size, second_best_ask_size = best_ask_size, second_best_ask_size, best_bid_size, second_best_bid_size
+        # Swap and invert prices for token2 (complement market)
+        best_bid, best_ask = 1 - best_ask, 1 - best_bid
+        top_bid, top_ask = 1 - top_ask, 1 - top_bid
+
+        # Handle second best prices - swap and invert if they exist
+        if second_best_ask is not None:
+            second_best_bid = 1 - second_best_ask
+        else:
+            second_best_bid = 0  # No second best bid available
+
+        if second_best_bid is not None:
+            second_best_ask = 1 - second_best_bid
+        else:
+            second_best_ask = float('inf')  # No second best ask available
+
+        # Swap sizes
+        best_bid_size, best_ask_size = best_ask_size, best_bid_size
+
+        # Handle second best sizes
+        if second_best_ask_size is not None and second_best_bid_size is not None:
+            second_best_bid_size, second_best_ask_size = second_best_ask_size, second_best_bid_size
+        else:
+            second_best_bid_size = 0
+            second_best_ask_size = 0
+
+        # Swap liquidity depth sums
         bid_sum_within_n_percent, ask_sum_within_n_percent = ask_sum_within_n_percent, bid_sum_within_n_percent
 
     # return as dictionary
