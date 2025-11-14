@@ -90,9 +90,14 @@ def analyze_market_quality(market, row, params):
     volatility_1h = row['1_hour']
     volatility_24h = row['24_hour']
     volatility_7d = row['7_day']
-    volatility_reward_ratio = row['volatilty/reward']
+    # Convert from string to float for comparison (field is stored as string in spreadsheet)
+    try:
+        volatility_reward_ratio = float(row['volatility/reward'])
+    except (ValueError, TypeError):
+        volatility_reward_ratio = 0
 
-    # 8. Reward analysis
+
+# 8. Reward analysis
     rewards_daily_rate = row['rewards_daily_rate']
     gm_reward_per_100 = row['gm_reward_per_100']
 
@@ -159,11 +164,11 @@ def analyze_market_quality(market, row, params):
         issues.append(f"Large price gaps: bid={avg_bid_gap:.3f}, ask={avg_ask_gap:.3f}")
 
     # 7. Volatility vs reward (weight: 10 points)
-    if volatility_reward_ratio <= 0.05:  # Low volatility relative to rewards
+    if volatility_reward_ratio >- 2:
         score += 10
-    elif volatility_reward_ratio <= 0.1:
+    elif volatility_reward_ratio >= 0.1:
         score += 8
-    elif volatility_reward_ratio <= 0.2:
+    elif volatility_reward_ratio >= 0.2:
         score += 5
     else:
         issues.append(f"High volatility vs reward: {volatility_reward_ratio:.3f}")
