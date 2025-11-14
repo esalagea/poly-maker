@@ -20,6 +20,8 @@ from py_clob_client.clob_types import OpenOrderParams
 
 # Smart contract ABIs
 from poly_data.abis import NegRiskAdapterABI, ConditionalTokenABI, erc20_abi
+from poly_data.log_utils import log_message
+from poly_data.data_utils import get_market_from_token
 
 # Load environment variables
 load_dotenv()
@@ -135,7 +137,12 @@ class PolymarketClient:
             resp = self.client.post_order(signed_order)
             return resp
         except Exception as ex:
-            print(ex)
+            # Get market identifier from token for logging
+            market = get_market_from_token(str(marketId))
+            if market:
+                log_message(market, f"ERROR creating {action} order for token {str(marketId)[:16]}... @ ${price:.3f} size {size:.2f}: {ex}")
+            else:
+                log_message("UNKNOWN_MARKET", f"ERROR creating {action} order for token {str(marketId)[:16]}... @ ${price:.3f} size {size:.2f}: {ex}")
             return {}
 
     def get_order_book(self, market):
