@@ -170,7 +170,8 @@ def save_market_quality_data(market_quality_df):
 def _update_selected_markets_quality(market_quality_df):
     """
     Update the quality field in the 'Selected Markets' worksheet for the corresponding question.
-    
+    Also populates trade_size from min_size if trade_size is empty.
+
     Args:
         market_quality_df (pd.DataFrame): DataFrame containing market quality analysis results
     """
@@ -185,14 +186,19 @@ def _update_selected_markets_quality(market_quality_df):
         #         # print(f"Skipping selected markets quality update - only {time_since_last_global_update.total_seconds():.0f} seconds since last spreadsheet update")
         #         return
         
-        # Extract the question and quality score from market_quality_df
+        # Extract the question, quality score, and min_size from market_quality_df
         question = market_quality_df['question'].iloc[0]
         quality_score = market_quality_df.get('score', pd.Series([None])).iloc[0]
-        
+        min_size = market_quality_df.get('min_size', pd.Series([None])).iloc[0]
+
         # Handle invalid quality scores
         if pd.isna(quality_score) or quality_score in [float('inf'), float('-inf')]:
             quality_score = ''
         
+        # Handle invalid min_size values
+        if pd.isna(min_size) or min_size in [float('inf'), float('-inf')]:
+            min_size = None
+
         # Get the spreadsheet instance
         spreadsheet = get_spreadsheet()
         
@@ -234,6 +240,16 @@ def _update_selected_markets_quality(market_quality_df):
         # Update the quality value
         selected_df.loc[row_index, 'quality'] = quality_score
         
+        # Ensure trade_size column exists
+        if 'trade_size' not in selected_df.columns:
+            selected_df['trade_size'] = ''
+
+        # Update trade_size only if it's empty and min_size is valid
+        current_trade_size = selected_df.loc[row_index, 'trade_size']
+        if (pd.isna(current_trade_size) or current_trade_size == '' or current_trade_size == 0) and min_size is not None:
+            selected_df.loc[row_index, 'trade_size'] = min_size
+            print(f"Updated trade_size for '{question}' to {min_size}")
+
         # Clean the DataFrame before updating sheet
         selected_df = selected_df.replace([float('inf'), float('-inf')], None)
         selected_df = selected_df.fillna('')

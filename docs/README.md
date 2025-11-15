@@ -14,9 +14,12 @@ This directory contains documentation of all fixes, improvements, and analysis p
 
 ## Improvements
 1. **[Log Formatting](improvements/log_formatting.md)** - Improved readability of TRADE and ORDER event logs
+2. **[Auto-populate trade_size](improvements/auto_populate_trade_size.md)** - Automatically populate trade_size field from min_size when empty
 
 ## Analysis
 1. **[Second Best Bid/Ask Usage](analysis/second_bid_ask_usage_analysis.md)** - Analysis of unused order book depth data
+2. **[Selected Markets Refresh Behavior](analysis/selected_markets_refresh_behavior.md)** - How and when the Selected Markets spreadsheet is read and refreshed
+3. **[Quality Field Update Flow](analysis/quality_field_update_flow.md)** - How and when the quality field in Selected Markets is updated
 
 ## Session Summary - November 14, 2025
 
