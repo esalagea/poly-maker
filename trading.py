@@ -231,27 +231,36 @@ def send_buy_order(order, existing_orders=None, log_message_text=None):
 def send_sell_order(order, existing_orders=None, log_message_text=None):
     """
     Create a SELL order for a specific token.
-    
+
     This function:
     1. Checks if the new order is different from existing sell order
-    2. Only cancels and creates new order if there are differences
-    3. Creates a new sell order with the specified parameters
-    4. Logs provided message only if order is actually created
-    
+    2. Validates minimum trade size requirement
+    3. Only cancels and creates new order if there are differences
+    4. Creates a new sell order with the specified parameters
+    5. Logs provided message only if order is actually created
+
     Args:
         order (dict): Order details including token, price, size, and market parameters
         existing_orders (dict, optional): Current orders for comparison. If None, uses order['orders']
         log_message_text (str, optional): Custom message to log when order is created
-    
+
     Returns:
         bool: True if order was created, False if skipped
     """
+    # Polymarket API minimum trade size
+    MIN_TRADE_SIZE = 5
+
     client = global_state.client
     market = order['market']
-    
+
+    # Check minimum trade size requirement
+    if float(order['size']) < MIN_TRADE_SIZE:
+        log_message(market, f"SELL ORDER REJECTED: Size {order['size']} is below Polymarket minimum of {MIN_TRADE_SIZE}. Token: {order['token']}")
+        return False
+
     # Use provided existing_orders or fall back to order['orders']
     current_orders = existing_orders if existing_orders is not None else order['orders']
-    
+
     # Check if new sell order is identical to existing sell order
     existing_sell = current_orders.get('sell', {})
     existing_sell_price = existing_sell.get('price', 0)
