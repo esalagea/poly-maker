@@ -8,7 +8,8 @@ from poly_data.log_utils import log_message
 from trading import perform_trade
 import time
 import asyncio
-from poly_data.data_utils import set_position, set_order, update_positions
+from poly_data.data_utils import set_position, set_order, update_positions, get_position
+from poly_data.trading_utils import calculate_pnl
 import json
 
 def process_book_data(asset, json_data):
@@ -159,7 +160,42 @@ def process_user_data(rows):
                     add_to_performing(col, row['id'])
 
                     log_message(market, "Matched. Performing is ", len(global_state.performing[col]))
+
+                    # Capture position BEFORE SELL trades to calculate PnL
+                    prev_position = None
+                    pnl_info = None
+                    if side.lower() == 'sell':
+                        prev_position = get_position(token)
+                        pnl_info = calculate_pnl(prev_position, side.lower(), size, price)
+
+                    # Update position
                     set_position(token, side, size, price)
+
+                    # Log PnL information for SELL trades
+                    if pnl_info and pnl_info['is_closing']:
+                        pnl = pnl_info['realized_pnl']
+                        pnl_symbol = "+" if pnl > 0 else ""
+                        pnl_status = "PROFIT" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAK-EVEN")
+
+                        log_message(market,
+                            f"\n{'='*80}\n"
+                            f"TRADE CLOSED - {pnl_status}\n"
+                            f"{'-'*80}\n"
+                            f"{'Side':<20} {side.upper():<10} Size: {size:.2f} @ ${price:.3f}\n"
+                            f"{'-'*80}\n"
+                            f"POSITION BEFORE:\n"
+                            f"  {'Size':<18} {prev_position['size']:>10.2f}\n"
+                            f"  {'Avg Price':<18} ${prev_position['avgPrice']:>9.3f}\n"
+                            f"{'-'*80}\n"
+                            f"P&L ANALYSIS:\n"
+                            f"  {'Closed Size':<18} {pnl_info['closed_size']:>10.2f}\n"
+                            f"  {'Entry Price':<18} ${prev_position['avgPrice']:>9.3f}\n"
+                            f"  {'Exit Price':<18} ${price:>9.3f}\n"
+                            f"  {'P&L per Unit':<18} ${pnl_info['pnl_per_unit']:>9.3f}\n"
+                            f"  {'Realized P&L':<18} {pnl_symbol}${abs(pnl):>8.2f} ({pnl_status})\n"
+                            f"{'='*80}"
+                        )
+
                     log_message(market, "Position after matching is ", global_state.positions[str(token)])
                     log_message(market, "Last trade update is ", global_state.last_trade_update)
                     log_message(market, "Performing is ", global_state.performing)

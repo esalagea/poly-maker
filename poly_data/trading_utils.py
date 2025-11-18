@@ -175,3 +175,54 @@ def get_buy_sell_amount(position, bid_price, row):
             buy_amount = buy_amount * int(row['multiplier'])
 
     return buy_amount, sell_amount
+
+
+def calculate_pnl(prev_position, trade_side, trade_size, trade_price):
+    """
+    Calculate realized PnL for SELL trades only.
+
+    Args:
+        prev_position: {'size': float, 'avgPrice': float}
+        trade_side: 'buy' or 'sell'
+        trade_size: float
+        trade_price: float
+
+    Returns:
+        dict: {
+            'realized_pnl': float,
+            'closed_size': float,
+            'pnl_per_unit': float,
+            'is_closing': bool
+        }
+    """
+    if trade_side == 'buy':
+        # No PnL calculation for BUY trades
+        return {
+            'realized_pnl': 0.0,
+            'closed_size': 0.0,
+            'pnl_per_unit': 0.0,
+            'is_closing': False
+        }
+
+    prev_size = prev_position.get('size', 0.0)
+    prev_avg_price = prev_position.get('avgPrice', 0.0)
+
+    if prev_size == 0:
+        # Nothing to close
+        return {
+            'realized_pnl': 0.0,
+            'closed_size': 0.0,
+            'pnl_per_unit': 0.0,
+            'is_closing': False
+        }
+
+    closed_size = min(abs(prev_size), trade_size)
+    pnl_per_unit = trade_price - prev_avg_price
+    realized_pnl = closed_size * pnl_per_unit
+
+    return {
+        'realized_pnl': realized_pnl,
+        'closed_size': closed_size,
+        'pnl_per_unit': pnl_per_unit,
+        'is_closing': True
+    }
