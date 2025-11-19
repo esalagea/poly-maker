@@ -55,10 +55,6 @@ def analyze_market_quality(market, row, params):
     mid_price = (best_bid_price + best_ask_price) / 2
     spread_pct = (spread / mid_price) * 100
 
-    # Compare with expected spread from row
-    expected_spread = row['spread']
-    spread_vs_expected = spread / expected_spread if expected_spread > 0 else 0
-
     # 2. Check liquidity balance
     total_bid_liquidity = sum(bids.values())
     total_ask_liquidity = sum(asks.values())
@@ -209,8 +205,6 @@ def analyze_market_quality(market, row, params):
         # Spread metrics
         "spread": spread,
         "spread_pct": spread_pct,
-        "expected_spread": expected_spread,
-        "spread_vs_expected": spread_vs_expected,
 
         # Liquidity metrics
         "total_bid_liquidity": total_bid_liquidity,
