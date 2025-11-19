@@ -18,6 +18,8 @@ def analyze_market_quality(market, row, params):
     asks = global_state.all_data[market]['asks']
     min_total_liquidity = params['min_total_liquidity']
 
+    blocker_issues_count = 0
+
     if not bids or not asks:
         return pd.DataFrame([{
             "market": market,
@@ -25,6 +27,17 @@ def analyze_market_quality(market, row, params):
             "score": 0,
             "recommendation": "POOR - Missing bids or asks",
             "reason": "Missing order book data"
+        }])
+
+    # Hard-fail on excessive volatility (absolute threshold check)
+    volatility_threshold = params.get('volatility_threshold', 300)
+    if row['3_hour'] > volatility_threshold:
+        return pd.DataFrame([{
+            "market": market,
+            "suitable": False,
+            "score": 0,
+            "recommendation": "POOR - Volatility too high",
+            "reason": f"3-hour volatility ({row['3_hour']}) exceeds threshold ({volatility_threshold})"
         }])
 
     # Get tick size from row
@@ -164,14 +177,15 @@ def analyze_market_quality(market, row, params):
         issues.append(f"Large price gaps: bid={avg_bid_gap:.3f}, ask={avg_ask_gap:.3f}")
 
     # 7. Volatility vs reward (weight: 10 points)
-    if volatility_reward_ratio >- 2:
+    # Note: volatility/reward is actually reward/volatility ratio (higher = better)
+    if volatility_reward_ratio >= 2:
         score += 10
-    elif volatility_reward_ratio >= 0.1:
+    elif volatility_reward_ratio >= 1:
         score += 8
-    elif volatility_reward_ratio >= 0.2:
+    elif volatility_reward_ratio >= 0.5:
         score += 5
     else:
-        issues.append(f"High volatility vs reward: {volatility_reward_ratio:.3f}")
+        issues.append(f"Poor reward/volatility ratio: {volatility_reward_ratio:.3f}")
 
     # Final recommendation
     if score >= 80:

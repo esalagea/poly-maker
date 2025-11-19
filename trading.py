@@ -735,11 +735,7 @@ def base_buy_conditions_met(market, position, buy_amount, row, market_quality_ro
     if buy_amount < row['min_size'] and params['buy_under_reward_min_size'] != "YES":
         failed_conditions.append(f"Buy amount below min_size: buy_amount={buy_amount}, min_size={row['min_size']}")
 
-    # Condition 1: Volatility check
-    if params is not None and row['3_hour'] > params['volatility_threshold']:
-        failed_conditions.append(f"3 Hour Volatility of {row['3_hour']} is greater than max volatility of {params['volatility_threshold']}")
-
-    # Condition 2: Reverse position check
+    # Condition 1: Reverse position check
     if token is not None:
         rev_token = global_state.REVERSE_TOKENS[str(token)]
         rev_pos = get_position(rev_token)
@@ -747,7 +743,7 @@ def base_buy_conditions_met(market, position, buy_amount, row, market_quality_ro
         if rev_pos['size'] > row['trade_size']:
             failed_conditions.append(f"Reverse position too large: size={rev_pos['size']}, trade_size={row['trade_size']}")
 
-    # Condition 3: Overall ratio check
+    # Condition 2: Overall ratio check
     if processed_market_data is not None:
         try:
             overall_ratio = (processed_market_data['bid_sum_within_n_percent']) / (processed_market_data['ask_sum_within_n_percent'])
@@ -757,7 +753,7 @@ def base_buy_conditions_met(market, position, buy_amount, row, market_quality_ro
         if overall_ratio < 0:
             failed_conditions.append(f"Overall ratio is negative: ratio={overall_ratio}")
 
-    # Condition 4: Price validation checks
+    # Condition 3: Price validation checks
     if order_price is not None and mid_price is not None and max_spread is not None:
         # Check incentive start price threshold
         incentive_start = mid_price - max_spread/100
