@@ -81,11 +81,16 @@ def _score_liquidity_balance(context):
 
 
 def _score_total_liquidity(context):
-    """Score total liquidity."""
+    """Score total liquidity and check for blocker."""
     total_liquidity = context['total_liquidity']
     min_total_liquidity = context['params']['min_total_liquidity']
+    blocker_min_total_liquidity = context['params'].get('blocker_min_total_liquidity', min_total_liquidity * 0.3)
 
-    if total_liquidity >= min_total_liquidity:
+    # Check for blocker condition first
+    if total_liquidity < blocker_min_total_liquidity:
+        context['issues'].append(f"[BLOCKER] Total liquidity too low: {total_liquidity:.0f} (min {blocker_min_total_liquidity:.0f})")
+        context['blocker_issues_count'] += 1
+    elif total_liquidity >= min_total_liquidity:
         context['score'] += 15
     elif total_liquidity >= min_total_liquidity * 0.5:
         context['score'] += 10
