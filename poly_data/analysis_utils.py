@@ -62,14 +62,19 @@ def _calculate_liquidity_metrics(context):
 
 
 def _score_liquidity_balance(context):
-    """Score liquidity balance."""
+    """Score liquidity balance and check for blocker."""
     balance_ratio = context['balance_ratio']
+    blocker_liquidity_balance = context['params'].get('blocker_liquidity_balance', 0.3)
 
-    if balance_ratio >= 0.7:
+    # Check for blocker condition first
+    if balance_ratio < blocker_liquidity_balance:
+        context['issues'].append(f"[BLOCKER] Liquidity severely imbalanced: {balance_ratio:.2f} (min {blocker_liquidity_balance:.2f})")
+        context['blocker_issues_count'] += 1
+    elif balance_ratio >= 0.7:
         context['score'] += 20
     elif balance_ratio >= 0.5:
         context['score'] += 15
-    elif balance_ratio >= 0.3:
+    elif balance_ratio >= 0.4:
         context['score'] += 8
     else:
         context['issues'].append(f"Poor liquidity balance: {balance_ratio:.2f}")
